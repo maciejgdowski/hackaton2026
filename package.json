@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./client run dev\" \"npm --prefix ./server run dev\"",
-    "install": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./client install\" \"npm --prefix ./server install\"",
-    "i": "npm run install"
+    "i": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./client install\" \"npm --prefix ./server install\""
   },
   "dependencies": {
     "concurrently": "^10.0.7"
