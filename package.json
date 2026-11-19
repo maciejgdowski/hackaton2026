@@ -3,8 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./client run dev\" \"npm --prefix ./server run dev\"",
-    "i": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./client install\" \"npm --prefix ./server install\""
+    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./server run dev\" \"npm --prefix ./client run dev\"",
+    "i": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./server install\" \"npm --prefix ./client install\""
   },
   "dependencies": {
     "concurrently": "^10.0.7"
