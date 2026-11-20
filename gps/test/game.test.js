@@ -35,7 +35,7 @@ test('one impostor, private roles, frozen 100 m zone and closed roster', () => {
   const state = game.state(host);
   assert.equal(state.self.role, 'regular');
   assert.equal(state.updateInterval, 120);
-  assert.equal(game.state(guest).updateInterval, 10);
+  assert.equal(game.state(guest).updateInterval, 1);
   assert.deepEqual(state.zone, { latitude: location.latitude, longitude: location.longitude, radius: 100 });
   assert.ok(state.players.every(p => !('role' in p) && !('location' in p)));
   assert.ok(state.positions.every(p => !('role' in p)));
@@ -45,18 +45,18 @@ test('one impostor, private roles, frozen 100 m zone and closed roster', () => {
   assert.throws(() => game.start(host), /already started/);
 });
 
-test('server withholds changed coordinates until exactly 10 / 120 seconds', () => {
+test('impostor sees positions live (1 s); regular players only every 120 s', () => {
   const { game, host, guest, hostToken, location, advance } = setup();
   game.start(host);
   const initial = game.state(host).positions;
-  advance(9999);
+  advance(999);
   game.updateLocation(guest, { ...location, latitude: 53 });
   assert.deepEqual(game.state(guest).positions, initial);
   assert.deepEqual(game.state(game.authenticate(hostToken)).positions, initial);
   advance(1);
   assert.equal(game.state(guest).positions[1].location.latitude, 53);
   assert.deepEqual(game.state(host).positions, initial);
-  advance(109999);
+  advance(118999);
   game.updateLocation(guest, { ...location, latitude: 54 });
   assert.deepEqual(game.state(host).positions, initial);
   advance(1);

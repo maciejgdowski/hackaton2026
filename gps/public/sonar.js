@@ -2,15 +2,19 @@
 // Every living player plays one sine tone at their slot frequency; the phone listens with the
 // mic and measures each other slot's tone above the local noise floor (SNR, dB).
 // Within 2 m = 1 s average ≥ KILL_DB; leave only below KILL_DB − HYST (no flicker).
-// Dropouts shorter than GRACE_S don't reset the "held close" timer.
+// The kill charges only while actually in range; dropouts shorter than GRACE_S pause it,
+// longer ones reset it. Field tuning without a redeploy: ?db=34 (threshold), ?debug=1.
 'use strict';
 window.Sonar = (() => {
-  const KILL_DB = 27, HYST = 5, GRACE_S = 1.5, HOLD_S = 3.5, DOPPLER_HZ = 100, FFT = 8192, VOLUME = 0.5, FADE = 0.18;
+  // v2: 27 dB let a kill through at 5–6 m in a real game -> 32 dB (≤2 m read 33–36 in calibration).
+  const q = new URLSearchParams(location.search), qdb = parseFloat(q.get('db'));
+  const KILL_DB = Number.isFinite(qdb) ? qdb : 32, HYST = 4, GRACE_S = 1.5, HOLD_S = 3.5, DOPPLER_HZ = 100, FFT = 8192, VOLUME = 0.5, FADE = 0.18;
   let cfg = { base: 17800, spacing: 300, slots: 8 };
   let ctx = null, osc = null, gain = null, analyser = null, spec = null, micTrack = null, wakeLock = null, timer = null;
   let mySlot = -1, emitting = false, ready = false;
-  const hist = [], avg1 = [], inRange = [], inSince = [], lastIn = [];
-  const reset = () => { for (let s = 0; s < 16; s++) { hist[s] = []; avg1[s] = NaN; inRange[s] = false; inSince[s] = 0; lastIn[s] = -1e9; } };
+  const hist = [], avg1 = [], inRange = [], held = [], lastIn = [];
+  let lastTick = 0;
+  const reset = () => { for (let s = 0; s < 16; s++) { hist[s] = []; avg1[s] = NaN; inRange[s] = false; held[s] = 0; lastIn[s] = -1e9; } };
   reset();
 
   const freq = s => cfg.base + s * cfg.spacing;
@@ -34,6 +38,7 @@ window.Sonar = (() => {
     if (!analyser) return;
     analyser.getFloatFrequencyData(spec);
     const binHz = ctx.sampleRate / analyser.fftSize, now = performance.now();
+    const dt = lastTick ? Math.min(0.5, (now - lastTick) / 1000) : 0; lastTick = now;
     for (let s = 0; s < cfg.slots; s++) {
       if (s === mySlot) continue;
       const v = toneSnr(freq(s), binHz), h = hist[s];
@@ -44,8 +49,8 @@ window.Sonar = (() => {
       avg1[s] = c ? sum / c : NaN;
       const was = inRange[s];
       inRange[s] = Number.isFinite(avg1[s]) && (was ? avg1[s] >= KILL_DB - HYST : avg1[s] >= KILL_DB);
-      if (inRange[s] && !was && now - lastIn[s] >= GRACE_S * 1000) inSince[s] = now;   // fresh approach, not a blip
-      if (inRange[s]) lastIn[s] = now;
+      if (inRange[s]) { held[s] += dt; lastIn[s] = now; }            // charge only while in range
+      else if (now - lastIn[s] >= GRACE_S * 1000) held[s] = 0;         // gone too long: start over
     }
   }
 
@@ -102,7 +107,7 @@ window.Sonar = (() => {
   });
 
   return {
-    HOLD_S, GRACE_S,
+    HOLD_S, GRACE_S, KILL_DB, debug: q.has('debug'),
     start,
     get ready() { return ready; },
     get running() { return !!ctx && ctx.state === 'running'; },
@@ -115,7 +120,7 @@ window.Sonar = (() => {
     // Proximity of one slot: near = within 2 m (or a short blip), held = seconds kept close.
     near(slot, now = performance.now()) {
       const near = inRange[slot] || now - lastIn[slot] < GRACE_S * 1000;
-      return { near, blip: near && !inRange[slot], held: near ? (now - inSince[slot]) / 1000 : 0, db: avg1[slot] };
+      return { near, blip: near && !inRange[slot], held: near ? held[slot] : 0, db: avg1[slot] };
     },
     reset,
   };

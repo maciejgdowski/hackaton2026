@@ -10,6 +10,9 @@ export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 
 
 // Sonar: every player gets a slot = their own near-ultrasonic frequency (one tone per phone).
 // Phones must stay well below the mic's limit, so slots are capped at 8 (17.8 – 19.9 kHz).
+// Map refresh: the impostor tracks everyone live; regular players get a snapshot every 2 min.
+export const IMPOSTOR_UPDATE_MS = 1000, REGULAR_UPDATE_MS = 120000;
+
 export const SONAR = { base: 17800, spacing: 300, slots: 8 };
 export const slotFreq = slot => SONAR.base + slot * SONAR.spacing;
 
@@ -140,7 +143,7 @@ export class Game {
       location: p.location && now - p.location.recordedAt <= 30000 ? { ...p.location } : null
     }));
     player.snapshotAt = now;
-    player.nextUpdateAt = now + (player.role === 'impostor' ? 10000 : 120000);
+    player.nextUpdateAt = now + (player.role === 'impostor' ? IMPOSTOR_UPDATE_MS : REGULAR_UPDATE_MS);
   }
 
   state(player) {
@@ -160,7 +163,7 @@ export class Game {
       result: this.result && { ...this.result, killedByName: killer ? killer.name : null },
       positions: player.snapshot ?? [], snapshotAt: player.snapshotAt ?? null,
       nextUpdateAt: player.nextUpdateAt,
-      updateInterval: this.phase === 'playing' ? (player.role === 'impostor' ? 10 : 120) : null
+      updateInterval: this.phase === 'playing' ? (player.role === 'impostor' ? IMPOSTOR_UPDATE_MS : REGULAR_UPDATE_MS) / 1000 : null
     };
   }
 
