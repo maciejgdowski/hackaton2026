@@ -6,7 +6,7 @@
 'use strict';
 window.World = (() => {
   const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
-  const HOME_ZOOM = 16.5, SPACE_ZOOM = 1.15, SPIN_DEG_PER_S = 3;
+  const HOME_ZOOM = 16.5, SPIN_DEG_PER_S = 3;
   let map = null, loaded = false, spinning = true, lastFrame = 0, mode = 'menu', homed = false, zoneKey = '', zoneFeature = null;
   const pending = [];                                   // calls made before the style loaded
   const whenLoaded = fn => (loaded ? fn() : pending.push(fn));
@@ -33,7 +33,12 @@ window.World = (() => {
   }
 
   // In the menu the globe sits in the upper part of the screen, above the title.
-  const menuPadding = () => ({ top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.38) });
+  // Wide screens: globe on the right half, the panel sits on the left.
+  const wide = () => window.innerWidth >= 900;
+  const spaceZoom = () => (wide() ? 1.75 : 1.15);
+  const menuPadding = () => wide()
+    ? { top: 0, bottom: 0, right: 0, left: Math.round(window.innerWidth * 0.42) }
+    : { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.38) };
 
   function setInteractive(on) {
     for (const h of ['dragPan', 'scrollZoom', 'touchZoomRotate', 'doubleClickZoom', 'keyboard', 'boxZoom'])
@@ -57,7 +62,7 @@ window.World = (() => {
     let style;
     try { style = monochrome(await (await fetch(STYLE_URL)).json()); }
     catch { return; }                                   // no map: the screens still work on black
-    map = new maplibregl.Map({ container, style, center: [19, 35], zoom: SPACE_ZOOM, padding: menuPadding(), attributionControl: { compact: true },
+    map = new maplibregl.Map({ container, style, center: [19, 35], zoom: spaceZoom(), padding: menuPadding(), attributionControl: { compact: true },
       maxPitch: 0, renderWorldCopies: false, fadeDuration: 300 });
     setInteractive(false);
     map.on('load', () => {
@@ -74,6 +79,7 @@ window.World = (() => {
       document.documentElement.classList.add('world-ready');
     });
     requestAnimationFrame(spin);
+    window.addEventListener('resize', () => { if (loaded && spinning) map.setPadding(menuPadding()); });
   }
 
   function fitZone() {
@@ -99,7 +105,7 @@ window.World = (() => {
       whenLoaded(() => {
         map.getSource('zone').setData(empty); map.getSource('dots').setData(empty);
         setInteractive(false);
-        map.flyTo({ center: [map.getCenter().lng, 35], zoom: SPACE_ZOOM, duration: 3000, essential: true, padding: menuPadding() });
+        map.flyTo({ center: [map.getCenter().lng, 35], zoom: spaceZoom(), duration: 3000, essential: true, padding: menuPadding() });
         map.once('moveend', () => { spinning = true; });
       });
     },

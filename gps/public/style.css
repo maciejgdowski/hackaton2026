@@ -85,3 +85,17 @@ body[data-screen="game"] .maplibregl-ctrl-bottom-right { bottom: auto; top: calc
 
 #error { position: fixed; z-index: 3000; left: 16px; right: 16px; bottom: max(96px, calc(env(safe-area-inset-bottom) + 96px)); margin: 0 auto;
   max-width: 420px; background: var(--fg); color: var(--bg); padding: 12px 14px; font-size: 14px; }
+
+/* ---------- wide screens (laptops / desktops): panel on the left, world on the right ---------- */
+@media (min-width: 900px) {
+  .screen { margin: 0 0 0 max(48px, 6vw); max-width: 460px; justify-content: center; gap: 32px; }
+  #join { justify-content: center; }
+  #join .mark { font-size: 96px; }
+  #end .mark { font-size: 64px; }
+  body[data-screen="join"] #veil { background: linear-gradient(90deg, #000f 0%, #000d 30%, #0000 55%); }
+  body[data-screen="lobby"] #veil, body[data-screen="end"] #veil {
+    background: linear-gradient(90deg, #000000f0 0%, #000000e0 calc(max(48px, 6vw) + 520px), #00000070 100%); }
+  #killbar { left: 50%; right: auto; width: 440px; transform: translateX(-50%); }
+  #debug { left: 16px; right: auto; width: 460px; }
+  #error { left: max(48px, 6vw); right: auto; width: 460px; margin: 0; }
+}
