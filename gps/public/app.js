@@ -81,8 +81,7 @@ function renderMap(data) {
   const alive = new Set(data.players.filter(p => p.alive).map(p => p.id));
   for (const p of data.positions) {
     if (!p.location || p.id === data.self.id || !alive.has(p.id)) continue;
-    L.circleMarker([p.location.latitude, p.location.longitude], { radius: 6, color: '#000', weight: 2, fillColor: '#9a9a9a', fillOpacity: 1 })
-      .bindTooltip(p.name, { permanent: true, direction: 'right', offset: [8, 0], className: 'tag' }).addTo(markers);
+    L.circleMarker([p.location.latitude, p.location.longitude], { radius: 6, color: '#000', weight: 2, fillColor: '#9a9a9a', fillOpacity: 1 }).addTo(markers);
   }
   // Yourself: always from your own live GPS fix.
   if (lastFix && data.self.alive)
@@ -179,6 +178,9 @@ function tickHud() {
   if (state?.phase !== 'playing') return;
   const left = Math.max(0, Math.ceil((state.endsAt - serverNow()) / 1000));
   let t = fmtTime(left);
+  const crew = state.self.role !== 'impostor' && state.self.alive;
+  $('refresh').hidden = !crew;
+  if (crew) $('refresh').textContent = `Map ${Math.max(0, Math.ceil((state.nextUpdateAt - serverNow()) / 1000))}s`;
   if (Sonar.debug) t = state.players.filter(p => p.id !== state.self.id).map(p => `${p.name.slice(0, 4)} ${(Sonar.near(p.slot).db ?? NaN).toFixed?.(0)}`).join(' ') + ` · >${Sonar.KILL_DB} · ` + t;
   $('timer').textContent = t;
 }
@@ -245,6 +247,14 @@ $('start').onclick = async () => {
 };
 $('leave').onclick = async () => { try { await api('leave', {}); resetSession(); } catch (error) { showError(error.message); } };
 $('reset').onclick = async () => { $('reset').disabled = true; try { render(await api('reset', {})); } catch (error) { showError(error.message); } finally { $('reset').disabled = false; } };
+async function quitGame() {
+  if (!confirm('Quit the game? You can’t rejoin this round.')) return;
+  try { await api('quit', {}); } catch (error) { showError(error.message); return; }
+  Sonar.setEmitting(false); $('dead').hidden = true; spectating = false;
+  resetSession();
+}
+$('quit').onclick = quitGame;
+$('quit-dead').onclick = quitGame;
 $('spectate').onclick = () => { spectating = true; $('dead').hidden = true; };
 $('recenter').onclick = () => zone && map.fitBounds(zone.getBounds().pad(0.15));
 

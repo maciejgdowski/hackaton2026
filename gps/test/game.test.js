@@ -34,7 +34,7 @@ test('one impostor, private roles, frozen 100 m zone and closed roster', () => {
   assert.equal(game.state(guest).self.role, 'impostor');
   const state = game.state(host);
   assert.equal(state.self.role, 'regular');
-  assert.equal(state.updateInterval, 120);
+  assert.equal(state.updateInterval, 15);
   assert.equal(game.state(guest).updateInterval, 1);
   assert.deepEqual(state.zone, { latitude: location.latitude, longitude: location.longitude, radius: 100 });
   assert.ok(state.players.every(p => !('role' in p) && !('location' in p)));
@@ -45,7 +45,7 @@ test('one impostor, private roles, frozen 100 m zone and closed roster', () => {
   assert.throws(() => game.start(host), /already started/);
 });
 
-test('impostor sees positions live (1 s); regular players only every 120 s', () => {
+test('impostor sees positions live (1 s); regular players only every 15 s', () => {
   const { game, host, guest, hostToken, location, advance } = setup();
   game.start(host);
   const initial = game.state(host).positions;
@@ -56,12 +56,12 @@ test('impostor sees positions live (1 s); regular players only every 120 s', () 
   advance(1);
   assert.equal(game.state(guest).positions[1].location.latitude, 53);
   assert.deepEqual(game.state(host).positions, initial);
-  advance(118999);
+  advance(13999);
   game.updateLocation(guest, { ...location, latitude: 54 });
   assert.deepEqual(game.state(host).positions, initial);
   advance(1);
   assert.equal(game.state(host).positions[1].location.latitude, 54);
-  assert.equal(game.state(host).nextUpdateAt - game.now(), 120000);
+  assert.equal(game.state(host).nextUpdateAt - game.now(), 15000);
 });
 
 test('lobby hides coordinates and expired GPS is marked unavailable', () => {
@@ -208,4 +208,28 @@ test('each player gets the lowest free sonar slot; max 8 players', () => {
   assert.equal(st.self.slot, 0);
   assert.ok(st.players.every(p => Number.isInteger(p.slot)));
   assert.equal(slotFreq(7), 19900);
+});
+
+test('quitting: crewmate counts as out, impostor quitting hands the crew the win, host passes on', () => {
+  let time = 1000000;
+  const game = new Game({ now: () => time, choose: () => 1 });     // 2nd player is the impostor
+  const toks = ['Host', 'Imp', 'A', 'B', 'C'].map(n => game.join(n));
+  const [host, imp, a, b, c] = toks.map(t => game.authenticate(t));
+  [host, imp, a, b, c].forEach(p => game.updateLocation(p, { latitude: 52.2, longitude: 21.1, accuracy: 5 }));
+  game.start(host);
+  game.quit(a);
+  assert.throws(() => game.authenticate(toks[2]), /Join/);
+  assert.equal(game.state(b).players.find(p => p.id === a.id).alive, false);
+  assert.equal(game.state(b).phase, 'playing');
+  game.quit(host);
+  assert.equal(game.hostId, imp.id);
+  game.quit(imp);
+  const end = game.state(b);
+  assert.equal(end.phase, 'ended');
+  assert.equal(end.result.winner, 'regular');
+  assert.equal(end.result.reason, 'The impostor quit.');
+  // B and C are still connected; reset drops the quitters
+  assert.equal(game.hostId, b.id);                     // host passed on again (A quit too)
+  game.reset(b);
+  assert.deepEqual(game.state(b).players.map(p => p.name), ['B', 'C']);
 });

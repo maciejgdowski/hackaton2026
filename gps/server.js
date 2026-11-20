@@ -68,6 +68,10 @@ export function createApp(game = new Game()) {
     game.reset(res.locals.player);
     res.json(game.state(res.locals.player));
   });
+  api.post('/quit', (req, res) => {
+    game.quit(res.locals.player);
+    res.json({ ok: true });
+  });
   api.post('/leave', (req, res) => {
     game.leave(res.locals.player);
     res.json({ ok: true });

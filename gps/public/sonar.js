@@ -6,9 +6,9 @@
 // longer ones reset it. Field tuning without a redeploy: ?db=34 (threshold), ?debug=1.
 'use strict';
 window.Sonar = (() => {
-  // v2: 27 dB let a kill through at 5–6 m in a real game -> 32 dB (≤2 m read 33–36 in calibration).
+  // 27 dB in / 22 dB out (tried 32: too strict in a real game). Override per phone with ?db=NN.
   const q = new URLSearchParams(location.search), qdb = parseFloat(q.get('db'));
-  const KILL_DB = Number.isFinite(qdb) ? qdb : 32, HYST = 4, GRACE_S = 1.5, HOLD_S = 3.5, DOPPLER_HZ = 100, FFT = 8192, VOLUME = 0.5, FADE = 0.18;
+  const KILL_DB = Number.isFinite(qdb) ? qdb : 27, HYST = 5, GRACE_S = 1.5, HOLD_S = 3.5, DOPPLER_HZ = 100, FFT = 8192, VOLUME = 0.5, FADE = 0.18;
   let cfg = { base: 17800, spacing: 300, slots: 8 };
   let ctx = null, osc = null, gain = null, analyser = null, spec = null, micTrack = null, wakeLock = null, timer = null;
   let mySlot = -1, emitting = false, ready = false;

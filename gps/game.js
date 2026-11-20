@@ -10,8 +10,8 @@ export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 
 
 // Sonar: every player gets a slot = their own near-ultrasonic frequency (one tone per phone).
 // Phones must stay well below the mic's limit, so slots are capped at 8 (17.8 – 19.9 kHz).
-// Map refresh: the impostor tracks everyone live; regular players get a snapshot every 2 min.
-export const IMPOSTOR_UPDATE_MS = 1000, REGULAR_UPDATE_MS = 120000;
+// Map refresh: the impostor tracks everyone live; crewmates get a snapshot every 15 s (testing value).
+export const IMPOSTOR_UPDATE_MS = 1000, REGULAR_UPDATE_MS = 15000;
 
 export const SONAR = { base: 17800, spacing: 300, slots: 8 };
 export const slotFreq = slot => SONAR.base + slot * SONAR.spacing;
@@ -132,6 +132,7 @@ export class Game {
   reset(player) {
     if (player.id !== this.hostId) throw new GameError('Only the host can start a new round.', 403);
     if (this.phase !== 'ended') throw new GameError('The game is still running.', 409);
+    for (const p of [...this.players.values()]) if (!this.hasSession(p)) this.players.delete(p.id);   // quitters
     this.phase = 'lobby'; this.zone = null; this.result = null; this.startedAt = undefined; this.endsAt = undefined; this.lastKillAt = null;
     for (const p of this.players.values()) Object.assign(p, { role: null, alive: true, snapshot: null, snapshotAt: null, nextUpdateAt: null, diedAt: undefined, killedBy: undefined });
   }
@@ -170,7 +171,30 @@ export class Game {
   leave(player) {
     if (this.phase !== 'lobby') throw new GameError('Players cannot leave the roster after the game starts.', 409);
     this.players.delete(player.id);
+    this.dropSessions(player);
+  }
+
+  // Quit at any time. In the lobby / after a round: removed. Mid-round: counts as out (signal
+  // lost) and stays on the roster until the next round; if the impostor quits, the crew wins.
+  quit(player) {
+    if (this.phase !== 'playing') {
+      this.players.delete(player.id);
+      this.dropSessions(player);
+      return;
+    }
+    player.alive = false; player.quit = true; player.diedAt = this.now();
+    this.dropSessions(player);
+    if (player.role === 'impostor') {
+      this.phase = 'ended';
+      this.result = { winner: 'regular', reason: 'The impostor quit.', impostorId: player.id, impostorName: player.name, endedAt: this.now() };
+    } else this.checkEnd();
+  }
+
+  hasSession(player) { for (const id of this.sessions.values()) if (id === player.id) return true; return false; }
+
+  dropSessions(player) {
     for (const [token, id] of this.sessions) if (id === player.id) this.sessions.delete(token);
-    if (this.hostId === player.id) this.hostId = this.players.keys().next().value ?? null;
+    if (this.hostId === player.id)
+      this.hostId = [...this.players.values()].find(p => p.id !== player.id && this.hasSession(p))?.id ?? null;
   }
 }

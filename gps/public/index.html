@@ -42,7 +42,10 @@
   <!-- game: map only -->
   <section id="game" hidden>
     <div id="map"></div>
-    <div class="hud"><span id="role" class="label"></span><span id="timer" class="mono"></span></div>
+    <div class="hud">
+      <div class="hud-left"><span id="role" class="label"></span><span id="refresh" class="label"></span></div>
+      <div class="hud-right"><span id="timer" class="mono"></span><button id="quit" class="mini">Quit</button></div>
+    </div>
     <div id="killbar" hidden></div>
     <button id="recenter" class="ghost round" aria-label="Recenter">◎</button>
   </section>
@@ -62,6 +65,7 @@
     <div class="mark glitch">SIGNAL<br>LOST</div>
     <p class="fine">You're out. The round goes on without you.</p>
     <button id="spectate" class="ghost">Watch</button>
+    <button id="quit-dead" class="ghost">Quit game</button>
   </div>
 
   <button id="reconnect" class="overlay" hidden>
