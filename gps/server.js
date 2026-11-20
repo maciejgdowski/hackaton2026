@@ -3,8 +3,9 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { GameError, Lobbies } from './game.js';
 
-// URL prefix the app lives under (outofsignal.pl/gps or /app). Set BASE_PATH to change it.
-const BASE = '/' + (process.env.BASE_PATH || '/gps').replace(/^\/+|\/+$/g, '');
+// URL prefix the app lives under (e.g. /gps). BASE_PATH=/ serves it at the site root.
+const prefix = (process.env.BASE_PATH ?? '/gps').replace(/^\/+|\/+$/g, '');
+const BASE = prefix ? '/' + prefix : '';
 
 // Accepts a Lobbies manager, or a single Game (wrapped; used by tests).
 const asLobbies = x => { if (x instanceof Lobbies) return x; const l = new Lobbies(); l.adopt(x); return l; };
@@ -24,8 +25,10 @@ export function createApp(lobbies = new Lobbies()) {
     });
     next();
   });
-  app.get('/', (req, res) => res.redirect(308, `${BASE}/`));
-  app.get(BASE, (req, res) => res.redirect(308, `${BASE}/`));
+  if (BASE) {
+    app.get('/', (req, res) => res.redirect(308, `${BASE}/`));
+    app.get(BASE, (req, res) => res.redirect(308, `${BASE}/`));
+  }
 
   const api = express.Router();
   api.use((req, res, next) => {
@@ -83,7 +86,7 @@ export function createApp(lobbies = new Lobbies()) {
     res.json({ ok: true });
   });
   app.use(`${BASE}/api`, api);
-  app.use(BASE, express.static(fileURLToPath(new URL('./public/', import.meta.url)), {
+  app.use(BASE || '/', express.static(fileURLToPath(new URL('./public/', import.meta.url)), {
     dotfiles: 'deny', etag: false, lastModified: false, cacheControl: false
   }));
   app.use((req, res) => res.status(404).json({ error: 'Not found.' }));

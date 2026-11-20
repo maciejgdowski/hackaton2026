@@ -39,7 +39,7 @@ On Windows PowerShell, use `npm.cmd` if script execution is restricted. Open htt
 
 Verification in the development environment: JavaScript syntax checks and the five game-logic tests passed. Installing Express was blocked by network permissions, so the Express HTTP integration test and browser verification still need to be run after installation.
 
-**Lobbies.** Enter a name, then *Create lobby* (pick the zone radius — 50/100/200/300 m — and max players, 2–8) or *Join* with the 4-letter lobby code. The lobby screen shows the code; tap it to share a link (`…/app/?code=ABCD` opens the join screen with the code filled in). Many lobbies run at once; a lobby disappears once everyone in it has left. The creator is the host. At least two players are needed to start. Starting obtains a fresh host location and fixes the zone (the lobby's radius) there. The server chooses exactly one impostor. Players see their own role and the shared map, with no special abilities. Regular players receive position snapshots every 120 seconds and the impostor every 10 seconds. The server enforces these intervals per authenticated session; polling faster or changing request parameters cannot bypass them. Coordinates are hidden in the lobby and other players' roles are never returned.
+**Lobbies.** Enter a name, then *Create lobby* (pick the zone radius — 50/100/200/300 m — and max players, 2–8) or *Join* with the 4-letter lobby code. The lobby screen shows the code; tap it to share a link (`outofsignal.pl/?code=ABCD` opens the join screen with the code filled in). Many lobbies run at once; a lobby disappears once everyone in it has left. The creator is the host. At least two players are needed to start. Starting obtains a fresh host location and fixes the zone (the lobby's radius) there. The server chooses exactly one impostor. Players see their own role and the shared map, with no special abilities. Regular players receive position snapshots every 120 seconds and the impostor every 10 seconds. The server enforces these intervals per authenticated session; polling faster or changing request parameters cannot bypass them. Coordinates are hidden in the lobby and other players' roles are never returned.
 
 Game state lives in memory in a single process; restart to reset. The roster closes on start. Reloading the same tab preserves its session. Missing GPS fixes or fixes over 30 seconds old are marked unavailable at the next snapshot. Keep the page open for GPS updates. Location on phones requires HTTPS. Leaflet and map tiles need internet access.
 
@@ -93,3 +93,8 @@ git switch -c feature/gps-express
 ```
 
 A branch does not configure the `/gps/` URL; the reverse proxy does that.
+
+## Hosting path
+
+`BASE_PATH` sets the URL prefix (default `/gps`). Production runs with `BASE_PATH=/` at the root of
+https://outofsignal.pl/ (old `/app/...` links redirect there).
