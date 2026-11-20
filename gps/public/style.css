@@ -116,3 +116,7 @@ body[data-screen="game"] .maplibregl-ctrl-bottom-right { bottom: auto; top: calc
   .checks > div { padding: 8px 10px; gap: 4px; }
   #end .mark { font-size: 34px; }
 }
+
+/* lobby: the map slowly breathes behind the panel */
+body[data-screen="lobby"] #world canvas { animation: breathe 5s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }

@@ -35,7 +35,7 @@ function resetSession() {
 function show(screen) {
   for (const id of ['join', 'lobby', 'game', 'end']) $(id).hidden = id !== screen;
   document.body.dataset.screen = screen;                 // drives the veil over the world map
-  World.setMode(screen === 'game' ? 'game' : 'menu');
+  World.setMode(screen === 'game' ? 'game' : screen === 'lobby' ? 'lobby' : 'menu');
 }
 
 const fmtTime = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -193,7 +193,7 @@ async function poll() {
 async function upload(position) {
   const { latitude, longitude, accuracy } = position.coords;
   lastFix = { latitude, longitude, accuracy };
-  if (state?.phase !== 'playing') World.home(latitude, longitude);
+  if (state?.phase !== 'playing') { World.home(latitude, longitude); World.me(latitude, longitude); }
   await api('location', { latitude, longitude, accuracy });
   lastUpload = Date.now();
 }

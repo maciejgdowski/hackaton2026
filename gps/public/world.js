@@ -1,13 +1,14 @@
 // World: one MapLibre map behind every screen.
 //   menu  -> dark 3D globe, slowly spinning
-//   join  -> camera flies from space down to your GPS position (lobby fades in on top)
+//   join  -> camera flies from space down to a 1 km × 1 km view of your area (lobby on top),
+//            only your own position is shown, with a slow radar pulse
 //   game  -> same map, interactive, with the 100 m zone and player dots
 // Map data: OpenFreeMap "dark" vector style (free, no key), tweaked to pure monochrome.
 'use strict';
 window.World = (() => {
   const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
-  const HOME_ZOOM = 16.5, SPIN_DEG_PER_S = 3;
-  let map = null, loaded = false, spinning = true, lastFrame = 0, mode = 'menu', homed = false, zoneKey = '', zoneFeature = null;
+  const SPIN_DEG_PER_S = 3, LOBBY_VIEW_M = 1000, PULSE_MS = 2600;
+  let me = null, map = null, loaded = false, spinning = true, lastFrame = 0, mode = 'menu', homed = false, zoneKey = '', zoneFeature = null;
   const pending = [];                                   // calls made before the style loaded
   const whenLoaded = fn => (loaded ? fn() : pending.push(fn));
 
@@ -39,6 +40,37 @@ window.World = (() => {
   const menuPadding = () => wide()
     ? { top: 0, bottom: 0, right: 0, left: Math.round(window.innerWidth * 0.42) }
     : { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.38) };
+
+  // Lobby: keep the 1 km box clear of the panel (bottom sheet on phones, left panel on desktop).
+  function lobbyPadding() {
+    const sheet = document.getElementById('lobby');
+    if (wide()) return { top: 40, bottom: 40, right: 40, left: Math.round(Math.max(48, window.innerWidth * 0.06) + 520) };
+    const h = sheet && !sheet.hidden ? sheet.offsetHeight : Math.round(window.innerHeight * 0.55);
+    return { top: 30, left: 16, right: 16, bottom: Math.min(h, window.innerHeight - 220) + 10 };
+  }
+  // Camera that fits LOBBY_VIEW_M metres into the free part of the screen (not under the panel).
+  function lobbyCamera(lat, lon) {
+    const pad = lobbyPadding();
+    const freePx = Math.max(120, Math.min(window.innerWidth - pad.left - pad.right, window.innerHeight - pad.top - pad.bottom));
+    const metresPerPx = LOBBY_VIEW_M / freePx;
+    const zoom = Math.log2(78271.517 * Math.cos(lat * Math.PI / 180) / metresPerPx);   // 512 px tiles
+    return { center: [lon, lat], zoom, bearing: 0, padding: pad };
+  }
+
+  // Radar pulse around your own dot in the lobby.
+  function pulse(t) {
+    if (loaded && mode === 'lobby' && me) {
+      const k = (t % PULSE_MS) / PULSE_MS;
+      map.setPaintProperty('me-pulse', 'circle-radius', 8 + 46 * k);
+      map.setPaintProperty('me-pulse', 'circle-stroke-opacity', 0.7 * (1 - k));
+    }
+    requestAnimationFrame(pulse);
+  }
+  function showMe() {
+    if (!loaded) return;
+    const fc = me && mode === 'lobby' ? { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [me.lon, me.lat] }, properties: { self: true } }] } : empty;
+    map.getSource('me').setData(fc);
+  }
 
   function setInteractive(on) {
     for (const h of ['dragPan', 'scrollZoom', 'touchZoomRotate', 'doubleClickZoom', 'keyboard', 'boxZoom'])
@@ -74,8 +106,13 @@ window.World = (() => {
       map.addLayer({ id: 'dots', type: 'circle', source: 'dots', paint: {
         'circle-radius': ['case', ['get', 'self'], 7, 6], 'circle-color': ['case', ['get', 'self'], '#ffffff', '#9a9a9a'],
         'circle-stroke-color': '#000000', 'circle-stroke-width': 2 } });
+      map.addSource('me', { type: 'geojson', data: empty });
+      map.addLayer({ id: 'me-pulse', type: 'circle', source: 'me', paint: { 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-opacity': 0,
+        'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.6 } });
+      map.addLayer({ id: 'me-dot', type: 'circle', source: 'me', paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#000000', 'circle-stroke-width': 2 } });
       loaded = true;
       pending.splice(0).forEach(fn => fn());
+      requestAnimationFrame(pulse);
       document.documentElement.classList.add('world-ready');
     });
     requestAnimationFrame(spin);
@@ -91,17 +128,21 @@ window.World = (() => {
 
   return {
     init,
-    // Fly from wherever we are down to a position (once per session unless forced).
+    // Fly from wherever we are down to a 1 km × 1 km view around a position (once unless forced).
     home(lat, lon, { force = false } = {}) {
+      me = { lat, lon };
       whenLoaded(() => {
+        showMe();
         if (homed && !force) return;
         homed = true; spinning = false;
-        map.flyTo({ center: [lon, lat], zoom: HOME_ZOOM, duration: 4500, curve: 1.6, essential: true, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
+        map.flyTo({ ...lobbyCamera(lat, lon), duration: 4500, curve: 1.6, essential: true });
       });
     },
+    // Your latest position (lobby shows only you).
+    me(lat, lon) { me = { lat, lon }; whenLoaded(showMe); },
     // Back out to the spinning globe (quit / left the lobby).
     space() {
-      homed = false; zoneKey = ''; zoneFeature = null;
+      homed = false; zoneKey = ''; zoneFeature = null; me = null;
       whenLoaded(() => {
         map.getSource('zone').setData(empty); map.getSource('dots').setData(empty);
         setInteractive(false);
@@ -114,6 +155,10 @@ window.World = (() => {
       mode = m;
       whenLoaded(() => setInteractive(m === 'game'));
       if (m !== 'game') { zoneKey = ''; whenLoaded(() => { map.getSource('zone').setData(empty); map.getSource('dots').setData(empty); }); }
+      // Back in the lobby after a round: re-frame the 1 km view around you.
+      if (m === 'lobby' && homed && me) whenLoaded(() => map.flyTo({ ...lobbyCamera(me.lat, me.lon), duration: 2000, essential: true }));
+      if (m === 'game') whenLoaded(() => map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }));   // full-screen map
+      whenLoaded(showMe);
     },
     // In game: draw the zone (fit to it the first time) and the dots.
     show(zone, dots) {
