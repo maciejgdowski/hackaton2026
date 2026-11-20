@@ -8,9 +8,8 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 16px/1.4 var(--sans); }
 [hidden] { display: none !important; }
 
-.screen { min-height: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px;
+.screen { position: relative; z-index: 2; min-height: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px;
   padding: max(28px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom)); }
-#join { justify-content: center; }
 .mark { font: 800 44px/0.95 var(--sans); letter-spacing: -0.02em; text-transform: uppercase; }
 .label { font: 600 11px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--mid); }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -40,18 +39,26 @@ button.mini { min-height: 32px; padding: 0 10px; font-size: 11px; background: #0
 .checks > div + div { border-left: 1px solid var(--line); }
 .ok { color: var(--fg); } .bad { color: var(--mid); }
 
-/* game: full-screen dark map */
-#game { position: fixed; inset: 0; }
-#map { position: absolute; inset: 0; background: #0b0b0b; }
-.leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.6) contrast(1.2); }
-.leaflet-control-attribution { background: #000a !important; color: var(--dim) !important; font-size: 9px; }
-.leaflet-control-attribution a { color: var(--mid) !important; }
-.leaflet-control-zoom { display: none; }
-.leaflet-tooltip.tag { background: transparent; border: 0; box-shadow: none; color: var(--fg); font: 600 11px var(--mono);
-  letter-spacing: 0.08em; text-transform: uppercase; padding: 0; text-shadow: 0 0 4px #000, 0 0 2px #000; }
-.leaflet-tooltip.tag::before { display: none; }
+/* world: one MapLibre map behind every screen (globe in the menu, your street in the lobby/game) */
+#world { position: fixed; inset: 0; z-index: 0; background: #000; opacity: 0; transition: opacity 1.6s ease; }
+.world-ready #world { opacity: 1; }
+#world canvas { filter: grayscale(1); outline: none; }
+#veil { position: fixed; inset: 0; z-index: 1; pointer-events: none; transition: background 1.2s ease;
+  background: radial-gradient(circle at 50% 45%, #0000 0%, #0008 70%); }
+body[data-screen="join"] #veil { background: linear-gradient(#000c 0%, #0000 35%, #0000 55%, #000e 100%); }
+body[data-screen="lobby"] #veil, body[data-screen="end"] #veil { background: linear-gradient(#000000d8 0%, #0000009a 60%, #000000d8 100%); }
+body[data-screen="game"] #veil { background: linear-gradient(#000a 0, #0000 90px); }
+#join { justify-content: flex-end; }
+.maplibregl-ctrl-attrib { background: #000a !important; color: var(--dim) !important; font-size: 9px; }
+.maplibregl-ctrl-attrib a { color: var(--mid) !important; }
+.maplibregl-ctrl-attrib-button { filter: invert(1); background-color: transparent !important; }
+body[data-screen="game"] .maplibregl-ctrl-bottom-right { bottom: auto; top: calc(max(14px, env(safe-area-inset-top)) + 52px); }
+
+/* game: HUD over the map; touches fall through to the map except on controls */
+#game { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+#game button, #game #killbar { pointer-events: auto; }
 .hud { position: absolute; z-index: 500; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center;
-  padding: max(14px, env(safe-area-inset-top)) 16px 14px; background: linear-gradient(#000c, #0000); pointer-events: none; }
+  padding: max(14px, env(safe-area-inset-top)) 16px 14px; pointer-events: none; }
 .hud .mono { font-size: 15px; }
 .hud-left, .hud-right { display: flex; align-items: center; gap: 12px; }
 .hud-left { flex-direction: column; align-items: flex-start; gap: 6px; }

@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>Out of Signal</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="./style.css">
-  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script defer src="./world.js"></script>
   <script defer src="./sonar.js"></script>
   <script defer src="./app.js"></script>
 </head>
 <body>
+  <div id="world"></div>
+  <div id="veil"></div>
   <!-- join -->
   <section id="join" class="screen">
     <div class="mark">OUT OF<br>SIGNAL</div>
@@ -41,7 +44,6 @@
 
   <!-- game: map only -->
   <section id="game" hidden>
-    <div id="map"></div>
     <div class="hud">
       <div class="hud-left"><span id="role" class="label"></span><span id="refresh" class="label"></span></div>
       <div class="hud-right"><span id="timer" class="mono"></span><button id="quit" class="mini">Quit</button></div>

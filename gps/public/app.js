@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 let token = sessionStorage.getItem('fieldwork-session');
-let state = null, map = null, zone = null, markers = null, watchId, polling = false, lastUpload = 0, serverOffset = 0;
+let state = null, watchId, polling = false, lastUpload = 0, serverOffset = 0;
 let lastFix = null, targetsKey = '', spectating = false, errorTimer = null;
 
 function showError(message) {
@@ -28,12 +28,14 @@ function resetSession() {
   sessionStorage.removeItem('fieldwork-session');
   if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
   watchId = undefined;
-  dropMap();
+  World.space();
   show('join');
 }
 
 function show(screen) {
   for (const id of ['join', 'lobby', 'game', 'end']) $(id).hidden = id !== screen;
+  document.body.dataset.screen = screen;                 // drives the veil over the world map
+  World.setMode(screen === 'game' ? 'game' : 'menu');
 }
 
 const fmtTime = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -62,30 +64,13 @@ function renderLobby(data) {
   $('waiting').textContent = host ? 'Your position at start becomes the centre of the 100 m zone.' : 'Waiting for the host to start.';
 }
 
-// ---------- game: map ----------
-function dropMap() {
-  if (map) map.remove();
-  map = null; zone = null; markers = null;
-}
-
+// ---------- game: map (World = the MapLibre globe behind every screen) ----------
 function renderMap(data) {
-  if (!window.L) { showError('Map failed to load. Check your connection and reload.'); return; }
-  if (!map) {
-    map = L.map('map', { zoomControl: false, attributionControl: true }).setView([data.zone.latitude, data.zone.longitude], 18);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
-    zone = L.circle([data.zone.latitude, data.zone.longitude], { radius: data.zone.radius, color: '#fff', weight: 1, opacity: 0.6, dashArray: '4 6', fillColor: '#fff', fillOpacity: 0.03 }).addTo(map);
-    markers = L.layerGroup().addTo(map);
-    map.fitBounds(zone.getBounds().pad(0.15));
-  }
-  markers.clearLayers();
   const alive = new Set(data.players.filter(p => p.alive).map(p => p.id));
-  for (const p of data.positions) {
-    if (!p.location || p.id === data.self.id || !alive.has(p.id)) continue;
-    L.circleMarker([p.location.latitude, p.location.longitude], { radius: 6, color: '#000', weight: 2, fillColor: '#9a9a9a', fillOpacity: 1 }).addTo(markers);
-  }
-  // Yourself: always from your own live GPS fix.
-  if (lastFix && data.self.alive)
-    L.circleMarker([lastFix.latitude, lastFix.longitude], { radius: 7, color: '#000', weight: 2, fillColor: '#fff', fillOpacity: 1 }).addTo(markers);
+  const dots = data.positions.filter(p => p.location && p.id !== data.self.id && alive.has(p.id))
+    .map(p => ({ lat: p.location.latitude, lon: p.location.longitude }));
+  if (lastFix && data.self.alive) dots.push({ lat: lastFix.latitude, lon: lastFix.longitude, self: true });   // you: live fix
+  World.show(data.zone, dots);
 }
 
 // ---------- impostor kill bar (sonar) ----------
@@ -164,7 +149,7 @@ function render(data) {
   $('dead').hidden = !(playing && !data.self.alive) || spectating;
   $('reconnect').hidden = !(playing && data.self.alive && !Sonar.ready);
 
-  if (data.phase === 'lobby') { dropMap(); targetsKey = ''; show('lobby'); renderLobby(data); return; }
+  if (data.phase === 'lobby') { targetsKey = ''; show('lobby'); renderLobby(data); if (lastFix) World.home(lastFix.latitude, lastFix.longitude); return; }
   if (data.phase === 'ended') { show('end'); renderEnd(data); return; }
 
   show('game');
@@ -208,6 +193,7 @@ async function poll() {
 async function upload(position) {
   const { latitude, longitude, accuracy } = position.coords;
   lastFix = { latitude, longitude, accuracy };
+  if (state?.phase !== 'playing') World.home(latitude, longitude);
   await api('location', { latitude, longitude, accuracy });
   lastUpload = Date.now();
 }
@@ -242,10 +228,13 @@ async function getReady() {
 $('join-form').addEventListener('submit', async event => {
   event.preventDefault(); showError('');
   const button = event.submitter; button.disabled = true;
+  // Start the fly-in as early as possible: ask for the position while joining.
+  const fix = getLocation().then(p => { lastFix = { latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy }; World.home(lastFix.latitude, lastFix.longitude); }).catch(() => {});
   try {
     const joined = await api('join', { name: $('name').value });
     token = joined.token; sessionStorage.setItem('fieldwork-session', token);
     await poll();
+    fix.then(() => enableLocation()).catch(() => {});
   } catch (error) { showError(error.message); }
   finally { button.disabled = false; }
 });
@@ -268,7 +257,7 @@ async function quitGame() {
 $('quit').onclick = quitGame;
 $('quit-dead').onclick = quitGame;
 $('spectate').onclick = () => { spectating = true; $('dead').hidden = true; };
-$('recenter').onclick = () => zone && map.fitBounds(zone.getBounds().pad(0.15));
+$('recenter').onclick = () => World.fitZone();
 
 setInterval(poll, 1000);
 setInterval(killTick, 200);
@@ -276,4 +265,5 @@ setInterval(tickHud, 500);
 // Refresh stationary devices too; watchPosition alone may not produce new fixes.
 setInterval(() => { if (token && watchId !== undefined) getLocation().then(upload).catch(() => {}); }, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+World.init('world');
 if (token) poll(); else show('join');
