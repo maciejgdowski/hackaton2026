@@ -44,7 +44,8 @@ const serverNow = () => Date.now() + serverOffset;
 // ---------- lobby ----------
 function renderLobby(data) {
   const host = data.self.id === data.hostId;
-  $('count').textContent = `${data.players.length} / ${data.sonar.slots}`;
+  $('lobby-code').textContent = data.lobby.code;
+  $('count').textContent = `${data.players.length} / ${data.lobby.maxPlayers} · ${data.lobby.radius} m`;
   $('players').replaceChildren(...data.players.map(p => {
     const li = document.createElement('li');
     if (!p.sound) li.className = 'off';
@@ -61,7 +62,7 @@ function renderLobby(data) {
   $('ready').hidden = soundOk && gpsOk;
   $('start').hidden = !host;
   $('start').disabled = data.players.length < 2;
-  $('waiting').textContent = host ? 'Your position at start becomes the centre of the 100 m zone.' : 'Waiting for the host to start.';
+  $('waiting').textContent = host ? `Your position at start becomes the centre of the ${data.lobby.radius} m zone.` : 'Waiting for the host to start.';
 }
 
 // ---------- game: map (World = the MapLibre globe behind every screen) ----------
@@ -225,19 +226,54 @@ async function getReady() {
 }
 
 // ---------- wiring ----------
-$('join-form').addEventListener('submit', async event => {
+// Join screen: name, then either "Create lobby" (pick zone radius + players) or "Join" (enter code).
+const form = $('join-form');
+function joinMode(mode) {
+  form.dataset.mode = mode; showError('');
+  $('choose').hidden = !!mode; $('create-opts').hidden = mode !== 'create'; $('join-opts').hidden = mode !== 'join';
+  if (mode === 'join') $('code').focus();
+}
+for (const group of [$('opt-radius'), $('opt-max')])
+  group.addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; for (const x of group.children) x.setAttribute('aria-pressed', x === b); });
+const picked = group => +group.querySelector('[aria-pressed="true"]').dataset.v;
+$('go-create').onclick = () => { if (form.reportValidity()) joinMode('create'); };
+$('go-join').onclick = () => { if (form.reportValidity()) joinMode('join'); };
+for (const b of form.querySelectorAll('.back')) b.onclick = () => joinMode('');
+$('code').addEventListener('input', () => { $('code').value = $('code').value.toUpperCase().replace(/[^A-Z]/g, ''); });
+$('name').value = localStorage.getItem('oos-name') || '';
+const linkCode = new URLSearchParams(location.search).get('code');
+if (linkCode) { $('code').value = linkCode.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); joinMode('join'); }
+
+form.addEventListener('submit', async event => {
   event.preventDefault(); showError('');
-  const button = event.submitter; button.disabled = true;
+  const mode = form.dataset.mode;
+  if (!mode) return;                                     // Enter on the name: wait for Create / Join
+  const name = $('name').value;
+  if (mode === 'join' && $('code').value.length !== 4) return showError('Enter the 4-letter lobby code.');
+  const button = mode === 'create' ? $('do-create') : $('do-join'); button.disabled = true;
   // Start the fly-in as early as possible: ask for the position while joining.
   const fix = getLocation().then(p => { lastFix = { latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: p.coords.accuracy }; World.home(lastFix.latitude, lastFix.longitude); }).catch(() => {});
   try {
-    const joined = await api('join', { name: $('name').value });
+    const joined = mode === 'create'
+      ? await api('create', { name, radius: picked($('opt-radius')), maxPlayers: picked($('opt-max')) })
+      : await api('join', { name, code: $('code').value });
     token = joined.token; sessionStorage.setItem('fieldwork-session', token);
+    localStorage.setItem('oos-name', name.trim());
+    if (linkCode) history.replaceState(null, '', location.pathname);
+    joinMode('');
     await poll();
     fix.then(() => enableLocation()).catch(() => {});
   } catch (error) { showError(error.message); }
   finally { button.disabled = false; }
 });
+$('lobby-code').onclick = async () => {
+  const code = state?.lobby?.code; if (!code) return;
+  const url = `${location.origin}${location.pathname}?code=${code}`;
+  try {
+    if (navigator.share) await navigator.share({ title: 'Out of Signal', text: `Join my Out of Signal lobby: ${code}`, url });
+    else { await navigator.clipboard.writeText(url); showError(`Link copied · code ${code}`); }
+  } catch {}
+};
 $('ready').onclick = getReady;
 $('reconnect').onclick = getReady;
 $('start').onclick = async () => {

@@ -18,17 +18,36 @@
   <!-- join -->
   <section id="join" class="screen">
     <div class="mark">OUT OF<br>SIGNAL</div>
-    <form id="join-form" class="stack">
+    <form id="join-form" class="stack" data-mode="">
       <label for="name" class="label">Name</label>
       <input id="name" maxlength="24" required autocomplete="nickname" spellcheck="false">
-      <button>Join</button>
+      <div id="choose" class="duo">
+        <button type="button" id="go-create">Create lobby</button>
+        <button type="button" id="go-join" class="ghost">Join</button>
+      </div>
+      <div id="create-opts" class="stack" hidden>
+        <span class="label">Zone radius</span>
+        <div id="opt-radius" class="seg" role="group" aria-label="Zone radius">
+          <button type="button" data-v="50">50 m</button><button type="button" data-v="100" aria-pressed="true">100 m</button><button type="button" data-v="200">200 m</button><button type="button" data-v="300">300 m</button>
+        </div>
+        <span class="label">Players</span>
+        <div id="opt-max" class="seg" role="group" aria-label="Max players">
+          <button type="button" data-v="2">2</button><button type="button" data-v="3">3</button><button type="button" data-v="4">4</button><button type="button" data-v="5">5</button><button type="button" data-v="6">6</button><button type="button" data-v="7">7</button><button type="button" data-v="8" aria-pressed="true">8</button>
+        </div>
+        <div class="duo"><button type="button" class="ghost back">Back</button><button id="do-create">Create</button></div>
+      </div>
+      <div id="join-opts" class="stack" hidden>
+        <label for="code" class="label">Lobby code</label>
+        <input id="code" class="code-input" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD">
+        <div class="duo"><button type="button" class="ghost back">Back</button><button id="do-join">Join</button></div>
+      </div>
     </form>
-    <p class="fine">100 m zone · 2 m kill range · 2–8 players</p>
+    <p class="fine">2 m kill range · 2–8 players · one impostor</p>
   </section>
 
   <!-- lobby -->
   <section id="lobby" class="screen" hidden>
-    <div class="bar"><span class="label">Lobby</span><span id="count" class="label"></span></div>
+    <div class="bar"><button id="lobby-code" class="codebtn" title="Share lobby code"></button><span id="count" class="label"></span></div>
     <ul id="players" class="list"></ul>
     <div class="stack">
       <div class="checks">

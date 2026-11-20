@@ -1,12 +1,16 @@
 import express from 'express';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
-import { Game, GameError } from './game.js';
+import { GameError, Lobbies } from './game.js';
 
 // URL prefix the app lives under (outofsignal.pl/gps or /app). Set BASE_PATH to change it.
 const BASE = '/' + (process.env.BASE_PATH || '/gps').replace(/^\/+|\/+$/g, '');
 
-export function createApp(game = new Game()) {
+// Accepts a Lobbies manager, or a single Game (wrapped; used by tests).
+const asLobbies = x => { if (x instanceof Lobbies) return x; const l = new Lobbies(); l.adopt(x); return l; };
+
+export function createApp(lobbies = new Lobbies()) {
+  lobbies = asLobbies(lobbies);
   const app = express();
   app.disable('x-powered-by');
   app.disable('etag');
@@ -42,38 +46,40 @@ export function createApp(game = new Game()) {
       throw new GameError('Expected a JSON object.');
     next();
   });
-  api.post('/join', (req, res) => res.status(201).json({ token: game.join(req.body.name) }));
+  api.post('/create', (req, res) => res.status(201).json(lobbies.create(req.body.name, { radius: req.body.radius, maxPlayers: req.body.maxPlayers })));
+  api.post('/join', (req, res) => res.status(201).json(lobbies.join(req.body.name, req.body.code)));
   api.use((req, res, next) => {
-    res.locals.player = game.authenticate(req.headers.authorization?.replace(/^Bearer /, ''));
+    const { game, player } = lobbies.authenticate(req.headers.authorization?.replace(/^Bearer /, ''));
+    res.locals.game = game; res.locals.player = player;
     next();
   });
-  api.get('/state', (req, res) => res.json(game.state(res.locals.player, { debug: req.headers['x-debug'] === '1' })));
+  api.get('/state', (req, res) => res.json(res.locals.game.state(res.locals.player, { debug: req.headers['x-debug'] === '1' })));
   api.post('/sound', (req, res) => {
-    game.setSound(res.locals.player, req.body.ready);
+    res.locals.game.setSound(res.locals.player, req.body.ready);
     res.json({ ok: true });
   });
   api.post('/location', (req, res) => {
-    game.updateLocation(res.locals.player, req.body);
+    res.locals.game.updateLocation(res.locals.player, req.body);
     res.json({ ok: true });
   });
   api.post('/start', (req, res) => {
-    game.start(res.locals.player);
-    res.json(game.state(res.locals.player));
+    res.locals.game.start(res.locals.player);
+    res.json(res.locals.game.state(res.locals.player));
   });
   api.post('/kill', (req, res) => {
-    game.kill(res.locals.player, req.body.targetId);
-    res.json(game.state(res.locals.player));
+    res.locals.game.kill(res.locals.player, req.body.targetId);
+    res.json(res.locals.game.state(res.locals.player));
   });
   api.post('/reset', (req, res) => {
-    game.reset(res.locals.player);
-    res.json(game.state(res.locals.player));
+    res.locals.game.reset(res.locals.player);
+    res.json(res.locals.game.state(res.locals.player));
   });
   api.post('/quit', (req, res) => {
-    game.quit(res.locals.player);
+    res.locals.game.quit(res.locals.player);
     res.json({ ok: true });
   });
   api.post('/leave', (req, res) => {
-    game.leave(res.locals.player);
+    res.locals.game.leave(res.locals.player);
     res.json({ ok: true });
   });
   app.use(`${BASE}/api`, api);
@@ -92,8 +98,10 @@ export function createApp(game = new Game()) {
   return app;
 }
 
-export function createServer(game = new Game()) {
-  return http.createServer(createApp(game));
+export function createServer(lobbies = new Lobbies()) {
+  lobbies = asLobbies(lobbies);
+  setInterval(() => lobbies.sweep(), 30000).unref();      // forget lobbies everyone has left
+  return http.createServer(createApp(lobbies));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

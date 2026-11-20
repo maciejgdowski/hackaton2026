@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, slotFreq, GATE_HOLD_MS, GONE_MS, ENDED_AUTO_RESET_MS, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
+import { Game, Lobbies, slotFreq, GATE_HOLD_MS, GONE_MS, ENDED_AUTO_RESET_MS, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
 
 function setup() {
   let time = 1000000;
@@ -283,4 +283,35 @@ test('self-healing: abandoned round is wiped, finished round reopens the lobby, 
   for (let t = 0; t < ENDED_AUTO_RESET_MS; t += 10000) { time += 10000; g2.authenticate(t2[2]); }   // Y keeps polling
   assert.equal(g2.phase, 'lobby');                   // back to the lobby without anyone pressing reset
   assert.deepEqual([...g2.players.values()].map(p => p.name), ['Y']);
+});
+
+test('lobbies: create with options, join by code, separate games, empty lobbies vanish', () => {
+  let time = 1000000;
+  const codes = ['ABCD', 'ABCD', 'WXYZ'];
+  const lobbies = new Lobbies({ now: () => time, choose: () => 0, newCode: () => codes.shift() });
+  assert.throws(() => lobbies.create('A', { radius: 5 }), /radius/);
+  assert.throws(() => lobbies.create('A', { maxPlayers: 9 }), /Players/);
+  assert.throws(() => lobbies.create(' ', {}), /name/);
+  const a = lobbies.create('Ann', { radius: 200, maxPlayers: 2 });
+  assert.equal(a.code, 'ABCD');
+  const b = lobbies.create('Ann', {});                       // same name is fine in another lobby; code collision skipped
+  assert.equal(b.code, 'WXYZ');
+  assert.throws(() => lobbies.join('Bob', 'QQQQ'), /No lobby/);
+  const bob = lobbies.join('Bob', ' abcd ');
+  assert.throws(() => lobbies.join('Cy', 'ABCD'), /full \(2 players max\)/);
+  const { game, player } = lobbies.authenticate(bob.token);
+  assert.equal(game.code, 'ABCD');
+  const st = game.state(player);
+  assert.deepEqual(st.lobby, { code: 'ABCD', radius: 200, maxPlayers: 2 });
+  assert.equal(st.players.length, 2);
+  const ann = lobbies.authenticate(a.token).player;
+  game.updateLocation(ann, { latitude: 52.2, longitude: 21.1, accuracy: 5 });
+  game.start(ann);
+  assert.equal(game.state(ann).zone.radius, 200);
+  assert.equal(lobbies.authenticate(b.token).game.phase, 'lobby');   // the other lobby is untouched
+  assert.throws(() => lobbies.authenticate('nope'), /Join/);
+  time += 10 * 60000;                                        // everyone gone
+  lobbies.sweep();
+  assert.equal(lobbies.games.size, 0);
+  assert.throws(() => lobbies.authenticate(a.token), /Join/);
 });

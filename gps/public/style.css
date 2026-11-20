@@ -125,3 +125,14 @@ body[data-screen="lobby"] #world canvas { animation: breathe 5s ease-in-out infi
 #players { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
   border-bottom: 1px solid var(--line); }
 #players li:last-child { border-bottom: 0; }
+
+/* join: create / join choice, lobby options */
+.duo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+.seg button { min-height: 42px; padding: 0; background: transparent; color: var(--fg); font: 600 13px var(--mono); letter-spacing: 0.04em; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+#create-opts .label { margin-top: 4px; }
+.code-input { font: 700 30px var(--mono); letter-spacing: 0.4em; text-transform: uppercase; }
+/* lobby: the code is the heading; tap to share */
+#lobby .codebtn { min-height: 0; padding: 0; border: 0; background: none; color: var(--fg); font: 700 30px/1 var(--mono); letter-spacing: 0.25em; }
+.codebtn::after { content: "share"; margin-left: 4px; font: 600 10px var(--mono); letter-spacing: 0.16em; color: var(--mid); vertical-align: middle; }

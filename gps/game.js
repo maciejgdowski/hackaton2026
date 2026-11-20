@@ -23,6 +23,9 @@ export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 
 export const IMPOSTOR_UPDATE_MS = 1000, REGULAR_UPDATE_MS = 15000;
 
 export const SONAR = { base: 17800, spacing: 300, slots: 8 };
+// Lobby options chosen by whoever creates the lobby.
+export const DEFAULT_RADIUS_M = 100, MIN_RADIUS_M = 25, MAX_RADIUS_M = 1000, MAX_LOBBIES = 200;
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ', CODE_LEN = 4;            // no I / O: easy to read out loud
 export const slotFreq = slot => SONAR.base + slot * SONAR.spacing;
 
 // Great-circle distance in metres.
@@ -34,8 +37,11 @@ export function distanceM(a, b) {
 }
 
 export class Game {
-  constructor({ now = Date.now, choose = randomInt, duration = GAME_DURATION_MS } = {}) {
+  constructor({ now = Date.now, choose = randomInt, duration = GAME_DURATION_MS, code = null, radius = DEFAULT_RADIUS_M, maxPlayers = SONAR.slots } = {}) {
     this.now = now;
+    this.code = code;
+    this.radius = radius;
+    this.maxPlayers = maxPlayers;
     this.choose = choose;
     this.duration = duration;
     this.players = new Map();
@@ -77,7 +83,7 @@ export class Game {
     }
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 24)
       throw new GameError('Choose a name between 1 and 24 characters.');
-    if (this.players.size >= SONAR.slots) throw new GameError(`The lobby is full (${SONAR.slots} players max).`, 409);
+    if (this.players.size >= this.maxPlayers) throw new GameError(`The lobby is full (${this.maxPlayers} players max).`, 409);
     if ([...this.players.values()].some(p => p.name.toLowerCase() === name.trim().toLowerCase()))
       throw new GameError('That name is already taken.', 409);
     const token = randomBytes(32).toString('hex');
@@ -113,7 +119,7 @@ export class Game {
     if (this.players.size < 2) throw new GameError('At least two players are required.', 409);
     if (!player.location || this.now() - player.location.recordedAt > 15000)
       throw new GameError('Get a fresh location before starting.', 409);
-    this.zone = { latitude: player.location.latitude, longitude: player.location.longitude, radius: 100 };
+    this.zone = { latitude: player.location.latitude, longitude: player.location.longitude, radius: this.radius };
     const players = [...this.players.values()];
     const impostor = this.choose(players.length);
     this.phase = 'playing';
@@ -225,6 +231,7 @@ export class Game {
     const killer = player.killedBy && this.players.get(player.killedBy);
     return {
       phase: this.phase, serverTime: this.now(), hostId: this.hostId,
+      lobby: { code: this.code, radius: this.radius, maxPlayers: this.maxPlayers },
       self: { id: player.id, name: player.name, slot: player.slot, role: player.role, alive: player.alive, diedAt: player.diedAt ?? null },
       // Who is out is public (like a body being found); who did it stays secret until the end.
       players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, alive: p.alive, sound: !!p.soundReady })),
@@ -267,5 +274,56 @@ export class Game {
     for (const [token, id] of this.sessions) if (id === player.id) this.sessions.delete(token);
     if (this.hostId === player.id)
       this.hostId = [...this.players.values()].find(p => p.id !== player.id && this.hasSession(p))?.id ?? null;
+  }
+}
+
+// Many games at once, each behind a short lobby code. A lobby disappears once everyone in it is gone
+// (each Game drops players it hasn't seen; an empty Game is deleted on the next sweep).
+export class Lobbies {
+  constructor({ now = Date.now, choose = randomInt, duration = GAME_DURATION_MS, newCode } = {}) {
+    this.opts = { now, choose, duration };
+    this.games = new Map();
+    this.newCode = newCode ?? (() => Array.from({ length: CODE_LEN }, () => CODE_CHARS[randomInt(CODE_CHARS.length)]).join(''));
+  }
+
+  // Register an existing game (tests).
+  adopt(game) { game.code ??= this.uniqueCode(); this.games.set(game.code, game); return game; }
+
+  uniqueCode() {
+    for (let i = 0; i < 1000; i++) { const c = this.newCode(); if (!this.games.has(c)) return c; }
+    throw new GameError('Could not create a lobby. Try again.', 503);
+  }
+
+  sweep() {
+    for (const [code, game] of this.games) { game.maintain(); if (!game.players.size) this.games.delete(code); }
+  }
+
+  create(name, { radius = DEFAULT_RADIUS_M, maxPlayers = SONAR.slots } = {}) {
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 24)
+      throw new GameError('Choose a name between 1 and 24 characters.');
+    if (!Number.isInteger(radius) || radius < MIN_RADIUS_M || radius > MAX_RADIUS_M)
+      throw new GameError(`Zone radius must be ${MIN_RADIUS_M}–${MAX_RADIUS_M} m.`);
+    if (!Number.isInteger(maxPlayers) || maxPlayers < 2 || maxPlayers > SONAR.slots)
+      throw new GameError(`Players must be 2–${SONAR.slots}.`);
+    this.sweep();
+    if (this.games.size >= MAX_LOBBIES) throw new GameError('Too many lobbies right now. Try again later.', 503);
+    const game = new Game({ ...this.opts, code: this.uniqueCode(), radius, maxPlayers });
+    const token = game.join(name);
+    this.games.set(game.code, game);
+    return { token, code: game.code };
+  }
+
+  join(name, code) {
+    this.sweep();
+    const key = typeof code === 'string' ? code.trim().toUpperCase() : '';
+    const game = this.games.get(key);
+    if (!game) throw new GameError(key ? `No lobby with code ${key}.` : 'Enter a lobby code.', 404);
+    return { token: game.join(name), code: game.code };
+  }
+
+  authenticate(token) {
+    if (typeof token === 'string' && token)
+      for (const game of this.games.values()) if (game.sessions.has(token)) return { game, player: game.authenticate(token) };
+    throw new GameError('Join the game to continue.', 401);
   }
 }
