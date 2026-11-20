@@ -12,7 +12,7 @@ function showError(message) {
 async function api(path, body) {
   const response = await fetch(`./api/${path}`, {
     method: body === undefined ? 'GET' : 'POST',
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(Sonar.debug ? { 'X-Debug': '1' } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const data = await response.json();
@@ -183,7 +183,17 @@ function tickHud() {
   const crew = state.self.role !== 'impostor' && state.self.alive;
   $('refresh').hidden = !crew;
   if (crew) $('refresh').textContent = `Map ${Math.max(0, Math.ceil((state.nextUpdateAt - serverNow()) / 1000))}s`;
-  if (Sonar.debug) t = state.players.filter(p => p.id !== state.self.id).map(p => `${p.name.slice(0, 4)} ${(Sonar.near(p.slot).db ?? NaN).toFixed?.(0)}`).join(' ') + ` · >${Sonar.KILL_DB} · ` + t;
+  $('debug').hidden = !Sonar.debug;
+  if (Sonar.debug) {
+    const g = state.gate || {}, f = x => x ? `±${x.acc} m, ${x.age}s old` : 'none';
+    const local = lastFix ? `±${Math.round(lastFix.accuracy)} m, sent ${Math.round((Date.now() - lastUpload) / 1000)}s ago` : 'none';
+    const db = state.players.filter(p => p.id !== state.self.id && p.alive)
+      .map(p => { const n = Sonar.near(p.slot); return `${p.name.slice(0, 6)} ${Number.isFinite(n.db) ? n.db.toFixed(0) : '–'}${n.near ? `*${n.held.toFixed(1)}s` : ''}`; }).join('  ');
+    $('debug').textContent = `SONAR ${state.sonarOn ? 'ON' : 'off'} (${g.why || '?'}) · kill ≥${Sonar.KILL_DB} dB\n`
+      + `nearest on GPS: ${g.nearest ? `${g.nearest.m} m (them ${f(g.nearest)})` : '–'}\n`
+      + `me on server: ${f(g.me)} · phone: ${local}\n`
+      + `dB: ${db || '–'}`;
+  }
   $('timer').textContent = t;
 }
 
@@ -264,6 +274,6 @@ setInterval(poll, 1000);
 setInterval(killTick, 200);
 setInterval(tickHud, 500);
 // Refresh stationary devices too; watchPosition alone may not produce new fixes.
-setInterval(() => { if (token && watchId !== undefined) getLocation().then(upload).catch(() => {}); }, 10000);
+setInterval(() => { if (token && watchId !== undefined) getLocation().then(upload).catch(() => {}); }, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 if (token) poll(); else show('join');

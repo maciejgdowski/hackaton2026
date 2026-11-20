@@ -47,7 +47,7 @@ export function createApp(game = new Game()) {
     res.locals.player = game.authenticate(req.headers.authorization?.replace(/^Bearer /, ''));
     next();
   });
-  api.get('/state', (req, res) => res.json(game.state(res.locals.player)));
+  api.get('/state', (req, res) => res.json(game.state(res.locals.player, { debug: req.headers['x-debug'] === '1' })));
   api.post('/sound', (req, res) => {
     game.setSound(res.locals.player, req.body.ready);
     res.json({ ok: true });

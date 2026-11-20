@@ -57,6 +57,8 @@ button.mini { min-height: 32px; padding: 0 10px; font-size: 11px; background: #0
 .hud-left { flex-direction: column; align-items: flex-start; gap: 6px; }
 #recenter { position: absolute; z-index: 500; right: 16px; bottom: max(20px, env(safe-area-inset-bottom)); width: 48px; padding: 0;
   font-size: 22px; background: #000c; }
+#debug { position: absolute; z-index: 600; left: 8px; right: 8px; top: calc(max(14px, env(safe-area-inset-top)) + 64px); margin: 0;
+  background: #000d; border: 1px solid var(--fg); padding: 8px; font: 11px/1.45 var(--mono); white-space: pre-wrap; pointer-events: none; }
 #killbar { position: absolute; z-index: 500; left: 16px; right: 80px; bottom: max(20px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
 #killbar button { min-height: 64px; font-size: 16px; position: relative; overflow: hidden; }
 #killbar button.charging { background: #000c; color: var(--fg); border-color: var(--fg); }
