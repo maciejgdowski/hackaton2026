@@ -8,7 +8,7 @@
 window.World = (() => {
   const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
   const SPIN_DEG_PER_S = 3, LOBBY_VIEW_M = 1000, PULSE_MS = 2600;
-  let me = null, map = null, loaded = false, spinning = true, lastFrame = 0, mode = 'menu', homed = false, zoneKey = '', zoneFeature = null;
+  let me = null, lastPad = '', map = null, loaded = false, spinning = true, lastFrame = 0, mode = 'menu', homed = false, zoneKey = '', zoneFeature = null;
   const pending = [];                                   // calls made before the style loaded
   const whenLoaded = fn => (loaded ? fn() : pending.push(fn));
 
@@ -51,18 +51,22 @@ window.World = (() => {
   // Camera that fits LOBBY_VIEW_M metres into the free part of the screen (not under the panel).
   function lobbyCamera(lat, lon) {
     const pad = lobbyPadding();
+    lastPad = JSON.stringify(pad);
     const freePx = Math.max(120, Math.min(window.innerWidth - pad.left - pad.right, window.innerHeight - pad.top - pad.bottom));
     const metresPerPx = LOBBY_VIEW_M / freePx;
     const zoom = Math.log2(78271.517 * Math.cos(lat * Math.PI / 180) / metresPerPx);   // 512 px tiles
     return { center: [lon, lat], zoom, bearing: 0, padding: pad };
   }
 
-  // Radar pulse around your own dot in the lobby.
+  // Radar pulse around your own dot in the lobby: two rings half a cycle apart. Each ring fades in
+  // as it leaves the dot and fades fully out before it restarts, so there is no visible snap back.
   function pulse(t) {
     if (loaded && mode === 'lobby' && me) {
-      const k = (t % PULSE_MS) / PULSE_MS;
-      map.setPaintProperty('me-pulse', 'circle-radius', 8 + 46 * k);
-      map.setPaintProperty('me-pulse', 'circle-stroke-opacity', 0.7 * (1 - k));
+      ['me-pulse', 'me-pulse2'].forEach((id, i) => {
+        const k = ((t + i * PULSE_MS / 2) % PULSE_MS) / PULSE_MS;
+        map.setPaintProperty(id, 'circle-radius', 8 + 46 * k);
+        map.setPaintProperty(id, 'circle-stroke-opacity', 0.7 * Math.min(1, k / 0.15) * (1 - k) ** 1.5);
+      });
     }
     requestAnimationFrame(pulse);
   }
@@ -107,8 +111,9 @@ window.World = (() => {
         'circle-radius': ['case', ['get', 'self'], 7, 6], 'circle-color': ['case', ['get', 'self'], '#ffffff', '#9a9a9a'],
         'circle-stroke-color': '#000000', 'circle-stroke-width': 2 } });
       map.addSource('me', { type: 'geojson', data: empty });
-      map.addLayer({ id: 'me-pulse', type: 'circle', source: 'me', paint: { 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-opacity': 0,
-        'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.6 } });
+      for (const id of ['me-pulse', 'me-pulse2'])
+        map.addLayer({ id, type: 'circle', source: 'me', paint: { 'circle-radius': 8, 'circle-color': '#ffffff', 'circle-opacity': 0,
+          'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0 } });
       map.addLayer({ id: 'me-dot', type: 'circle', source: 'me', paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#000000', 'circle-stroke-width': 2 } });
       loaded = true;
       pending.splice(0).forEach(fn => fn());
@@ -117,6 +122,16 @@ window.World = (() => {
     });
     requestAnimationFrame(spin);
     window.addEventListener('resize', () => { if (loaded && spinning) map.setPadding(menuPadding()); });
+    // Lobby sheet grows/shrinks as players join -> keep your 1 km view centred in the free area.
+    // Checked when the sheet resizes and whenever a camera move ends (it may have grown mid-flight).
+    const sheet = document.getElementById('lobby');
+    const refit = () => {
+      if (!loaded || mode !== 'lobby' || !homed || !me || map.isMoving()) return;
+      const pad = JSON.stringify(lobbyPadding());
+      if (pad !== lastPad) map.easeTo({ ...lobbyCamera(me.lat, me.lon), duration: 700 });
+    };
+    if (sheet && window.ResizeObserver) new ResizeObserver(refit).observe(sheet);
+    map.on('moveend', refit);
   }
 
   function fitZone() {

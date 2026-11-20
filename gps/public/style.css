@@ -120,3 +120,8 @@ body[data-screen="game"] .maplibregl-ctrl-bottom-right { bottom: auto; top: calc
 /* lobby: the map slowly breathes behind the panel */
 body[data-screen="lobby"] #world canvas { animation: breathe 5s ease-in-out infinite; }
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
+
+/* lobby: the player list scrolls on its own and never takes more than 40% of the screen */
+#players { max-height: 40vh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--line); }
+#players li:last-child { border-bottom: 0; }
