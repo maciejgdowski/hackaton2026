@@ -1,12 +1,17 @@
 {
-  "name": "hackaton2026",
-  "private": true,
+  "name": "out-of-signal",
   "version": "1.0.0",
+  "description": "Real-world Among Us for phones: GPS + near-ultrasonic proximity.",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./server run dev\" \"npm --prefix ./client run dev\"",
-    "i": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./server install\" \"npm --prefix ./client install\""
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
-    "concurrently": "^10.0.7"
+    "express": "5.1.0"
   }
 }
