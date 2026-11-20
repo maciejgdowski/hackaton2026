@@ -6,6 +6,10 @@ export class GameError extends Error {
 
 // Kill rules. The 2 m check happens on the impostor's phone (sonar). GPS can't see 2 m, so the
 // server only rejects kills that are clearly impossible: both fixes fresh and > KILL_RANGE_M apart.
+// GPS gate for the sonar: phones only play / analyse tones while another living player is within
+// GATE_M on GPS (+ up to GATE_SLACK_M for GPS error). Stays on GATE_HOLD_MS after leaving, and
+// is on whenever GPS is missing/stale (fail open, so kills still work without GPS).
+export const GATE_M = 15, GATE_SLACK_M = 10, GATE_HOLD_MS = 10000;
 export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 30000, GAME_DURATION_MS = 10 * 60000;
 
 // Sonar: every player gets a slot = their own near-ultrasonic frequency (one tone per phone).
@@ -147,6 +151,23 @@ export class Game {
     player.nextUpdateAt = now + (player.role === 'impostor' ? IMPOSTOR_UPDATE_MS : REGULAR_UPDATE_MS);
   }
 
+  // Is any other living player close enough on GPS for the sonar to bother? Role-blind on purpose:
+  // the phone switching on must not reveal who is near.
+  sonarGate(player) {
+    if (this.phase !== 'playing' || !player.alive) return false;
+    const now = this.now(), fresh = p => p.location && now - p.location.recordedAt <= KILL_FIX_MAX_AGE_MS;
+    let near = !fresh(player);                                    // no GPS for me -> stay on
+    for (const p of this.players.values()) {
+      if (near) break;
+      if (p === player || !p.alive) continue;
+      if (!fresh(p)) { near = true; break; }                      // their GPS missing -> stay on
+      const slack = Math.min(GATE_SLACK_M, (player.location.accuracy + p.location.accuracy) / 2);
+      if (distanceM(player.location, p.location) <= GATE_M + slack) near = true;
+    }
+    if (near) player.gateUntil = now + GATE_HOLD_MS;
+    return near || now < (player.gateUntil ?? 0);
+  }
+
   state(player) {
     // The cache belongs to the authenticated player, never the request/connection.
     // Polling faster, reconnecting, or supplying a different role cannot bypass it.
@@ -159,6 +180,7 @@ export class Game {
       // Who is out is public (like a body being found); who did it stays secret until the end.
       players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, alive: p.alive, sound: !!p.soundReady })),
       sonar: SONAR,
+      sonarOn: this.sonarGate(player),
       zone: this.zone, startedAt: this.startedAt ?? null, endsAt: this.endsAt ?? null,
       killCooldownUntil: player.role === 'impostor' && this.lastKillAt !== null ? this.lastKillAt + KILL_COOLDOWN_MS : null,
       result: this.result && { ...this.result, killedByName: killer ? killer.name : null },

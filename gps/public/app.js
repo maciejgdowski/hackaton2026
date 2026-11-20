@@ -124,7 +124,7 @@ function killTick() {
   }
   const idle = $('kill-idle');
   idle.hidden = close > 0;
-  idle.textContent = cool > 0 ? `Recharging ${cool}` : 'No target in range';
+  idle.textContent = cool > 0 ? `Recharging ${cool}` : state.sonarOn ? 'No target in range' : 'Nobody within 15 m';
 }
 
 async function kill(id, btn) {
@@ -157,7 +157,9 @@ function render(data) {
   serverOffset = data.serverTime - Date.now();
   const playing = data.phase === 'playing';
   Sonar.configure(data.sonar, data.self.slot);
-  Sonar.setEmitting(playing && data.self.alive);            // everyone alive broadcasts; the dead go silent
+  // GPS gate: tones + listening only while the server says someone is within ~15 m.
+  Sonar.setEmitting(playing && data.self.alive && data.sonarOn);
+  Sonar.setListening(playing && data.self.alive && data.sonarOn);
   if (data.self.alive) spectating = false;
   $('dead').hidden = !(playing && !data.self.alive) || spectating;
   $('reconnect').hidden = !(playing && data.self.alive && !Sonar.ready);

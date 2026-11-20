@@ -12,7 +12,7 @@ window.Sonar = (() => {
   const KILL_DB = Number.isFinite(qdb) ? qdb : 25, HYST = 5, GRACE_S = 1.5, HOLD_S = 3.5, DOPPLER_HZ = 100, FFT = 8192, VOLUME = 0.5, FADE = 0.18;
   let cfg = { base: 17800, spacing: 300, slots: 8 };
   let ctx = null, osc = null, gain = null, analyser = null, spec = null, micTrack = null, wakeLock = null, timer = null;
-  let mySlot = -1, emitting = false, ready = false;
+  let mySlot = -1, emitting = false, listening = true, ready = false;
   const hist = [], avg1 = [], inRange = [], held = [], lastIn = [];
   let lastTick = 0;
   const reset = () => { for (let s = 0; s < 16; s++) { hist[s] = []; avg1[s] = NaN; inRange[s] = false; held[s] = 0; lastIn[s] = -1e9; } };
@@ -37,6 +37,7 @@ window.Sonar = (() => {
 
   function tick() {
     if (!analyser) return;
+    if (!listening) { lastTick = 0; return; }
     analyser.getFloatFrequencyData(spec);
     const binHz = ctx.sampleRate / analyser.fftSize, now = performance.now();
     const dt = lastTick ? Math.min(0.5, (now - lastTick) / 1000) : 0; lastTick = now;
@@ -117,6 +118,8 @@ window.Sonar = (() => {
       if (slot !== mySlot) { mySlot = slot; if (osc) osc.frequency.setValueAtTime(freq(slot), ctx.currentTime); }
     },
     setEmitting(on) { if (on === emitting) return; emitting = on; ramp(on ? VOLUME : 0); },
+    // Off = ignore the mic entirely and forget all proximity (GPS says nobody is around).
+    setListening(on) { if (on === listening) return; listening = on; if (!on) reset(); },
     freq,
     // Proximity of one slot: near = within 2 m (or a short blip), held = seconds kept close.
     near(slot, now = performance.now()) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, slotFreq, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
+import { Game, slotFreq, GATE_HOLD_MS, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
 
 function setup() {
   let time = 1000000;
@@ -232,4 +232,25 @@ test('quitting: crewmate counts as out, impostor quitting hands the crew the win
   assert.equal(game.hostId, b.id);                     // host passed on again (A quit too)
   game.reset(b);
   assert.deepEqual(game.state(b).players.map(p => p.name), ['B', 'C']);
+});
+
+test('sonar gate: on only while someone is within ~15 m on GPS, holds 10 s, fails open without GPS', () => {
+  let time = 1000000;
+  const game = new Game({ now: () => time, choose: () => 0 });
+  const [a, b] = ['A', 'B'].map(n => game.authenticate(game.join(n)));
+  const put = (p, dLat) => game.updateLocation(p, { latitude: 52.2 + dLat, longitude: 21.1, accuracy: 4 });
+  put(a, 0); put(b, 0);
+  assert.equal(game.state(a).sonarOn, false);                 // lobby: off
+  game.start(a);
+  assert.equal(game.state(a).sonarOn, true);                  // same spot
+  put(b, 0.0005);                                             // ~56 m away
+  assert.equal(game.state(a).sonarOn, true);                  // still held
+  time += GATE_HOLD_MS;
+  put(a, 0); put(b, 0.0005);
+  assert.equal(game.state(a).sonarOn, false);
+  assert.equal(game.state(b).sonarOn, false);
+  put(b, 0.00015);                                            // ~17 m: within 15 m + slack
+  assert.equal(game.state(a).sonarOn, true);
+  time += GATE_HOLD_MS + 30001;                               // all GPS stale -> fail open
+  assert.equal(game.state(b).sonarOn, true);
 });
