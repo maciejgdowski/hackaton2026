@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Sonar Test</title>
+<style>
+:root{--bg:#0b0d10;--panel:#151a20;--line:#252c35;--fg:#eef2f6;--dim:#8d99a6;--ok:#3ddc84;--bad:#ff5c5c;--warn:#ffcc33}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.35 system-ui,-apple-system,sans-serif;-webkit-text-size-adjust:100%}
+main{max-width:720px;margin:0 auto;padding:12px 16px 80px}
+h1{font-size:20px;margin:4px 0 8px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin:20px 0 6px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin:8px 0}
+button,select,input{font:inherit;color:var(--fg);background:#1f262e;border:1px solid #333d48;border-radius:10px;padding:8px 12px;min-height:44px}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+button.on{background:var(--ok);color:#000;border-color:var(--ok);font-weight:700}
+input[type=number],input[type=text],select{width:100%}
+input[type=range]{width:100%;padding:0;min-height:36px}
+label{display:block;font-size:13px;color:var(--dim);margin:6px 0 2px}
+#start{width:100%;font-size:30px;font-weight:800;padding:24px;background:var(--ok);color:#000;border:0}
+.warn{background:#3a2e00;border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:10px;font-weight:600}
+.err{background:#3a0d0d;border:1px solid var(--bad);color:#ffc2c2;border-radius:10px;padding:10px;white-space:pre-wrap}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.row>button{flex:1 1 auto}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.slotbtn{font-size:20px;font-weight:800;border-width:3px;padding:10px 0}
+.slotbtn.sel{color:#000}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-size:14px}
+.kv b{color:var(--dim);font-weight:500}
+.big{font-size:22px;font-weight:800}
+.slot{display:grid;grid-template-columns:1fr 62px 62px 70px;gap:4px 6px;align-items:center;padding:6px 6px;border-radius:8px;font-variant-numeric:tabular-nums;border:2px solid transparent}
+.slot.best{border-color:#fff}
+.slot .name{font-weight:700;white-space:nowrap;overflow:hidden}
+.slot .num{text-align:right;font-size:18px}
+.slot .avg{font-weight:800;font-size:20px}
+.slot .bar{grid-column:1/-1;height:8px;background:#0006;border-radius:4px;overflow:hidden}
+.slot .tones{grid-column:1/-1;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden}
+.slot .bar i{display:block;height:100%;width:0}
+.badge{text-align:center;font-weight:800;border-radius:6px;padding:4px 0;font-size:14px}
+.IN{background:var(--ok);color:#000}.OUT{background:#2a323b;color:var(--dim)}
+#killBanner{font-size:24px;font-weight:800;text-align:center;padding:14px;border-radius:12px;margin:8px 0;background:#2a323b;color:var(--dim)}
+#killBanner.in{background:var(--ok);color:#000}
+.hdr{display:grid;grid-template-columns:1fr 62px 62px 70px;gap:6px;font-size:12px;color:var(--dim);padding:0 6px}
+.hdr span:not(:first-child){text-align:right}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+td,th{border-bottom:1px solid var(--line);padding:4px;text-align:left;white-space:nowrap}
+.scroll{overflow-x:auto}
+small,.dim{color:var(--dim)}
+details summary{cursor:pointer;font-weight:700;padding:6px 0}
+[hidden]{display:none!important}
+.killbtn{width:100%;margin-top:6px;font-size:24px;font-weight:900;min-height:64px;border:0;color:#fff;background:var(--bad)}
+.killbtn:disabled{color:var(--dim);cursor:default}
+#killMsg{text-align:center;font-weight:700;margin-top:6px;min-height:1.3em}
+#dead{position:fixed;inset:0;z-index:99;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px}
+#dead h1{font-size:44px;color:var(--bad);letter-spacing:.08em;margin:0;animation:flick 1.2s infinite}
+#dead p{color:var(--dim);margin:0;font-size:18px}
+@keyframes flick{0%,100%{opacity:1}45%{opacity:1}50%{opacity:.25}55%{opacity:1}80%{opacity:.6}}
+</style>
+</head>
+<body>
+<main>
+<h1>📡 Sonar proximity test</h1>
+<div class="warn">iPhone: turn OFF silent mode. Disconnect Bluetooth headphones. Volume up.</div>
+<div id="err" class="err" hidden></div>
+
+<h2>My slot</h2>
+<div id="slotPick" class="g4"></div>
+
+<div class="panel" style="margin-top:12px"><button id="start">START</button></div>
+
+<div id="app" hidden>
+  <div class="panel">
+    <div class="big" id="hMe"></div>
+    <div class="kv" style="margin-top:6px">
+      <b>Emit</b><span id="hEmit"></span>
+      <b>Audio</b><span id="hAudio"></span>
+      <b>Mic</b><span id="hMic"></span>
+      <b>Wake lock</b><span id="hWake"></span>
+    </div>
+  </div>
+
+  <h2>Emitter</h2>
+  <div class="panel">
+    <div class="g2">
+      <button id="emitBtn">Emit</button>
+      <button id="modeBtn">Continuous</button>
+    </div>
+    <label>Volume <span id="volVal"></span></label>
+    <input id="vol" type="range" min="0" max="1" step="0.05" value="0.5">
+    <label>Masking noise (soft rumble below 6 kHz, hides the whine a bit) <span id="maskVal"></span></label>
+    <input id="mask" type="range" min="0" max="1" step="0.05" value="0">
+  </div>
+
+  <h2>Within 2 m?</h2>
+  <div id="killBanner">nobody within 2 m</div>
+  <div id="killBtns"></div>
+  <div id="killMsg" class="dim"></div>
+  <div class="panel">
+    <div class="hdr"><span>slot</span><span>live dB</span><span>1 s dB</span><span>≤2 m</span></div>
+    <div id="slots"></div>
+  </div>
+
+
+  <h2>Calibration logger</h2>
+  <div class="panel">
+    <label>Distance (m)</label><div id="distPick" class="row"></div>
+    <label>Condition</label><div id="condPick" class="g2"></div>
+    <label>Source slot (phone being measured)</label><div id="srcPick" class="g4"></div>
+    <label>Note</label><input id="note" type="text" placeholder="e.g. windy, park, Pixel→iPhone">
+    <button id="recBtn" style="width:100%;margin-top:10px;font-size:20px;font-weight:800">● Record 3 s</button>
+    <div id="recMsg" class="dim" style="margin-top:6px"></div>
+    <div style="border-top:1px solid #333;margin-top:12px;padding-top:10px">
+      <label>Interval recording – record continuously, then cut labelled chunks (uses the distance / condition / source above)</label>
+      <button id="ivBtn" style="width:100%;font-size:18px;font-weight:800">▶ Start recording intervals</button>
+      <div id="ivBox" style="display:none;margin-top:8px">
+        <div id="ivLive" style="font-size:18px;font-weight:700"></div>
+        <label>What happened in this interval?</label>
+        <input id="ivNote" type="text" placeholder="e.g. walking 1→3 m, phone in pocket, door closed">
+        <button id="ivCut" style="width:100%;margin-top:8px;font-size:20px;font-weight:800">✂ Create interval</button>
+        <div class="row" style="margin-top:6px"><button id="ivDrop">↺ Discard current</button><button id="ivStop">■ Stop</button></div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="copyBtn">Copy CSV</button><button id="dlBtn">Download CSV</button><button id="clearBtn">Clear</button>
+    </div>
+    <div class="scroll" style="margin-top:8px"><table id="tbl"></table></div>
+  </div>
+
+  <details class="panel"><summary>Settings</summary>
+    <div class="g2">
+      <div><label>Base Hz</label><input id="sBase" type="number" step="50"></div>
+      <div><label>Spacing Hz</label><input id="sSpacing" type="number" step="10"></div>
+      <div><label>Slots (phones)</label><input id="sSlots" type="number" step="1" min="1" max="8"></div>
+      <div><label>Tones per phone</label><input id="sTones" type="number" step="1" min="1" max="4"></div>
+      <div><label>Hop dwell ms</label><input id="sDwell" type="number" step="50" min="150"></div>
+      <div><label>Doppler search ±Hz</label><input id="sDoppler" type="number" step="5" min="5" max="150"></div>
+      <div><label>FFT size</label><select id="sFft"><option>4096</option><option>8192</option><option>16384</option><option>32768</option></select></div>
+      <div><label>Smoothing (0–0.95)</label><input id="sSmooth" type="number" step="0.05" min="0" max="0.95"></div>
+      <div><label>In range (≤2 m) ≥ dB</label><input id="sKill" type="number" step="1"></div>
+      <div><label>Leave range below (in − x dB)</label><input id="sHyst" type="number" step="0.5" min="0"></div>
+      <div><label>Kill unlocks after (s in range)</label><input id="sKillHold" type="number" step="0.5" min="0"></div>
+      <div><label>Dropout grace (s, keeps kill timer)</label><input id="sKillGrace" type="number" step="0.5" min="0"></div>
+      <div><label>Pulse on/off ms</label><input id="sPulse" type="number" step="50" min="150"></div>
+      <div><label>audioSession.type</label><select id="sSession"><option>play-and-record</option><option>playback</option><option>auto</option></select></div>
+    </div>
+    <small>Kill signal for slot v = base + (tones × slots + v) × spacing (just above all slot tones).
+Tone t of slot s = base + (t × slots + s) × spacing. Each phone hops between its tones every “dwell” ms. Doppler: ~60 Hz per 1 m/s at 20 kHz; needs spacing ≥ 2×Doppler + 10. All phones must use the same settings. audioSession change applies best after reload.</small>
+  </details>
+
+  <details class="panel"><summary>Device info</summary><div class="kv" id="dev"></div></details>
+</div>
+</main>
+<div id="dead" hidden>
+  <h1>📵 SIGNAL LOST</h1>
+  <p id="deadBy">You were killed.</p>
+  <p style="font-size:14px">Your phone stopped broadcasting.</p>
+  <button id="respawn" style="margin-top:30px">Respawn (test)</button>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const MAXS = 8, MAXT = 4, FADE = 0.18, PULSE_RAMP = 0.08, GLIDE = 0.015;
+const COLORS = [['#ff4d4d','red'],['#ff9f1a','orange'],['#ffe14d','yellow'],['#3ddc84','green'],
+                ['#33d6ff','cyan'],['#4d7cff','blue'],['#b066ff','purple'],['#ff66c4','pink']];
+const DISTS = [0,0.5,1,1.5,2,2.5,3,3.5,4,5,6,8];
+const CONDS = ['hand facing','hand away','pocket','body between'];
+
+// ---------- storage (always try/catch: private mode / blocked storage) ----------
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('sonar.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('sonar.' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
+};
+// 'settings5': new key so phones that saved older settings get the new defaults.
+// Back to 17.8 kHz+: above 20 kHz phone speakers/mics are much weaker. One tone per phone.
+// kill 27 / hyst 5 (enter ≥27, leave <22), from interval runs: standing in zone 33 dB (min 21), walking in zone 31 dB, border 27 dB, out 19 dB (max 29).
+const S = Object.assign({ base: 17800, spacing: 300, slots: 4, tones: 1, dwell: 250, doppler: 100, fft: 8192, smooth: 0.3,
+  kill: 27, hyst: 5, pulseMs: 300, killHold: 3.5, killGrace: 1.5, session: 'play-and-record' }, store.get('settings5', {}));
+const clampSlot = i => Math.max(0, Math.min(S.slots - 1, i | 0));
+let mySlot = clampSlot(store.get('slot', 0)), srcSlot = clampSlot(store.get('src', 1));
+let dist = store.get('dist', 2), cond = store.get('cond', CONDS[0]);
+let rows = store.get('rows', []);
+if (!Array.isArray(rows)) rows = [];
+
+let ctx = null, osc = null, gain = null, analyser = null, spec = null, micTrack = null, wakeLock = null;
+let emitting = true, pulsed = false, volume = 0.5, pulseTimer = null, hopTimer = null, hopIdx = 0;
+let hist, histT, live, avg1, peakOff, toneMax1, rec = null;
+const grid = (a, b, f) => [...Array(a)].map(() => [...Array(b)].map(f));
+function resetHist() {
+  hist = [...Array(MAXS)].map(() => []); histT = grid(MAXS, MAXT, () => []);
+  live = Array(MAXS).fill(NaN); avg1 = Array(MAXS).fill(NaN); peakOff = Array(MAXS).fill(NaN);
+  toneMax1 = grid(MAXS, MAXT, () => NaN);
+}
+resetHist();
+
+// Slot s, tone t. Tones are interleaved (t*slots + s) so one phone's tones are slots*spacing
+// apart (560 Hz by default) -> they fade independently in multipath (frequency diversity).
+const toneFreq = (s, t) => S.base + (t * S.slots + s) * S.spacing;
+const slotFreqs = s => [...Array(S.tones).keys()].map(t => toneFreq(s, t));
+const f1 = v => Number.isFinite(v) ? v.toFixed(1) : '–';
+const r1 = v => Number.isFinite(v) ? Math.round(v * 10) / 10 : '';
+const slotName = i => `S${i} ${COLORS[i][1]}`;
+const ua = navigator.userAgent;
+const shortUA = (((ua.match(/\(([^)]*)\)/) || [])[1] || '') + ' ' +
+  ((ua.match(/(CriOS|FxiOS|EdgA|SamsungBrowser|Firefox|Chrome|Version)\/[\d.]+/) || [''])[0])).slice(0, 90);
+
+function showErr(msg) { const e = $('err'); e.textContent = msg; e.hidden = !msg; if (msg) e.scrollIntoView({ block: 'center' }); }
+// 2 m or not: enter range when the 1 s average ≥ S.kill, leave only when it drops below
+// S.kill − S.hyst (hysteresis, so it doesn't flicker at the boundary).
+const NOISE_OK = 12;                                 // above this a peak is clearly a real tone
+let inRange = Array(MAXS).fill(false), inSince = Array(MAXS).fill(0), lastIn = Array(MAXS).fill(-1e9);
+// Dropouts shorter than S.killGrace s don't reset the kill timer, and you can still kill during them.
+const nearFor = (s, now) => inRange[s] || now - lastIn[s] < S.killGrace * 1000;
+function updateRange(s) {
+  const v = avg1[s], was = inRange[s], now = performance.now();
+  inRange[s] = Number.isFinite(v) && (was ? v >= S.kill - S.hyst : v >= S.kill);
+  if (inRange[s] && !was && now - lastIn[s] >= S.killGrace * 1000) inSince[s] = now;   // fresh approach, not a blip
+  if (inRange[s]) lastIn[s] = now;
+}
+
+// ---------- kill mechanic ----------
+// Stay within 2 m of someone for S.killHold s -> KILL button. Killing plays a short "kill tone"
+// for the victim's slot (a separate frequency above all slot tones). The victim's phone hears
+// it, stops broadcasting and shows SIGNAL LOST. The killer sees the victim's signal vanish.
+const KILL_TX_MS = 2000, KILL_HEAR_DB = 15, KILL_HEAR_TICKS = 4, CONFIRM_MS = 6000;
+const killFreq = v => S.base + (S.tones * S.slots + v) * S.spacing;
+let killOsc = null, killGain = null, killTx = null, dead = false, killHeard = 0, pending = null;
+function drawKillBtns() {
+  const box = $('killBtns'); box.innerHTML = '';
+  for (let i = 0; i < S.slots; i++) {
+    if (i === mySlot) continue;
+    const b = document.createElement('button');
+    b.id = 'kill' + i; b.className = 'killbtn'; b.hidden = true;
+    b.onclick = () => doKill(i);
+    box.appendChild(b);
+  }
+}
+function renderKill(now) {
+  for (let i = 0; i < S.slots; i++) {
+    const b = $('kill' + i); if (!b) continue;
+    b.hidden = dead || !nearFor(i, now);
+    if (b.hidden) continue;
+    const held = (now - inSince[i]) / 1000, ready = held >= S.killHold && !killTx;
+    b.disabled = !ready;
+    if (ready) { b.style.background = ''; b.textContent = `🔪 KILL ${slotName(i)}`; }
+    else {
+      const pc = Math.min(100, held / S.killHold * 100);
+      b.style.background = `linear-gradient(to right,#6b2626 ${pc}%,#2a323b ${pc}%)`;
+      b.textContent = killTx ? 'sending kill…' : `${slotName(i)} – stay close ${Math.max(0, S.killHold - held).toFixed(1)} s` + (inRange[i] ? '' : ' (signal blip)');
+    }
+  }
+}
+function doKill(v) {
+  if (!ctx || dead || killTx || !nearFor(v, performance.now())) return;
+  if (!killOsc) {
+    killOsc = ctx.createOscillator(); killOsc.type = 'sine';
+    killGain = ctx.createGain(); killGain.gain.value = 0;
+    killOsc.connect(killGain); killGain.connect(ctx.destination); killOsc.start();
+  }
+  killOsc.frequency.setValueAtTime(killFreq(v), ctx.currentTime);
+  const t = ctx.currentTime, g = killGain.gain, lvl = Math.max(0.3, volume);
+  g.cancelScheduledValues(t); g.setValueAtTime(0, t);
+  g.linearRampToValueAtTime(lvl, t + FADE); g.setValueAtTime(lvl, t + KILL_TX_MS / 1000 - FADE);
+  g.linearRampToValueAtTime(0, t + KILL_TX_MS / 1000);
+  killTx = setTimeout(() => { killTx = null; }, KILL_TX_MS);
+  pending = { v, t: performance.now() };
+  if (navigator.vibrate) navigator.vibrate(80);
+  $('killMsg').textContent = `🔪 Kill sent to ${slotName(v)}…`;
+}
+// Called every tick: victim side (hear my kill tone) + killer side (confirm the victim went silent).
+function killTick(binHz, now) {
+  if (!dead) {
+    const [v] = toneSnr(killFreq(mySlot), binHz);
+    killHeard = v >= KILL_HEAR_DB ? killHeard + 1 : 0;
+    if (killHeard >= KILL_HEAR_TICKS) die();
+  }
+  if (pending) {
+    const age = now - pending.t;
+    if (age > KILL_TX_MS && !(avg1[pending.v] >= NOISE_OK)) {
+      $('killMsg').textContent = `☠ ${slotName(pending.v)} – signal lost (confirmed)`; pending = null;
+    } else if (age > CONFIRM_MS) {
+      $('killMsg').textContent = `⚠ ${slotName(pending.v)} still broadcasting – kill not received`; pending = null;
+    }
+  }
+}
+function die() {
+  dead = true; killHeard = 0;
+  // best guess at the killer: the strongest phone in range right now
+  let by = -1;
+  for (let i = 0; i < S.slots; i++) if (i !== mySlot && Number.isFinite(avg1[i]) && (by < 0 || avg1[i] > avg1[by])) by = i;
+  emitting = false; applyEmit();
+  $('deadBy').textContent = by >= 0 ? `Killed – probably by ${slotName(by)}.` : 'You were killed.';
+  $('dead').hidden = false;
+  if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 600]);
+}
+function respawn() { dead = false; killHeard = 0; $('dead').hidden = true; emitting = true; applyEmit(); }
+
+// ---------- generic button-group builder ----------
+function buttons(container, items, label, isSel, onPick, colorOf) {
+  const el = $(container); el.innerHTML = '';
+  items.forEach((it, idx) => {
+    const b = document.createElement('button');
+    b.textContent = label(it, idx);
+    b.onclick = () => { onPick(it, idx); buttons(container, items, label, isSel, onPick, colorOf); };
+    if (colorOf) {
+      b.className = 'slotbtn' + (isSel(it, idx) ? ' sel' : '');
+      b.style.borderColor = colorOf(idx);
+      if (isSel(it, idx)) b.style.background = colorOf(idx);
+    } else if (isSel(it, idx)) b.className = 'on';
+    el.appendChild(b);
+  });
+}
+function drawPickers() {
+  const idx = [...Array(S.slots).keys()];
+  buttons('slotPick', idx, i => i, i => i === mySlot, i => { mySlot = i; store.set('slot', i); restartHop(); drawSlotRows(); drawKillBtns(); updateHeader(); }, i => COLORS[i][0]);
+  buttons('srcPick', idx, i => i, i => i === srcSlot, i => { srcSlot = i; store.set('src', i); }, i => COLORS[i][0]);
+  buttons('distPick', DISTS, d => d + ' m', d => d === dist, d => { dist = d; store.set('dist', d); });
+  buttons('condPick', CONDS, c => c, c => c === cond, c => { cond = c; store.set('cond', c); });
+}
+
+// ---------- START: AudioContext + getUserMedia must be created inside this tap (iOS) ----------
+async function start() {
+  showErr('');
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      throw new Error('Microphone API unavailable. Open this page over HTTPS in Safari or Chrome (not an in-app browser like Messenger/Instagram).');
+    if (navigator.audioSession && S.session !== 'auto') { try { navigator.audioSession.type = S.session; } catch (e) { /* ignore */ } }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC();
+    ctx.resume().catch(() => {});           // don't await: keep the gesture for getUserMedia
+    ctx.onstatechange = updateHeader;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    micTrack = stream.getAudioTracks()[0];
+    micTrack.onended = () => showErr('Microphone stopped (another app took it, or permission was revoked). Reload the page.');
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+
+    // Listener: mic -> analyser only. Never connected to destination (no feedback).
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser();
+    src.connect(analyser);
+    applyAnalyser();
+
+    // Emitter: sine osc runs forever; gain is ramped for on/off, frequency glides for hops.
+    osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = toneFreq(mySlot, 0);
+    gain = ctx.createGain(); gain.gain.value = 0;
+    osc.connect(gain); gain.connect(ctx.destination); osc.start();
+    buildMask();
+
+    $('start').parentElement.hidden = true; $('app').hidden = false;
+    requestWake(); applyEmit(); restartHop(); drawSlotRows(); drawKillBtns(); updateHeader(); renderTable(); devInfo();
+    setInterval(tick, 100);
+  } catch (e) {
+    const n = e && e.name;
+    let msg = (e && e.message) || String(e);
+    if (n === 'NotAllowedError' || n === 'SecurityError')
+      msg = 'Microphone permission denied.\niPhone: Settings › Apps › Safari › Microphone → Ask/Allow, or tap “aA” › Website Settings › Microphone.\nAndroid Chrome: tap the icon left of the URL › Permissions › Microphone → Allow.\nThen reload this page.';
+    else if (n === 'NotFoundError') msg = 'No microphone found.';
+    else if (n === 'NotReadableError') msg = 'Microphone is busy (phone call or another app using it). Close it and reload.';
+    showErr('Could not start: ' + msg);
+    if (ctx) { try { ctx.close(); } catch (x) { /* ignore */ } ctx = null; }
+  }
+}
+
+function applyAnalyser() {
+  analyser.fftSize = S.fft;
+  analyser.smoothingTimeConstant = S.smooth;
+  spec = new Float32Array(analyser.frequencyBinCount);
+  resetHist();
+}
+
+// ---------- emitter: gain envelope (on/off/pulse) ----------
+function rampTo(v, dur) {
+  if (!gain) return;
+  const t = ctx.currentTime, g = gain.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(g.value, t);             // start the ramp from wherever we are now
+  g.linearRampToValueAtTime(v, t + dur);
+}
+function applyEmit() {
+  clearInterval(pulseTimer); pulseTimer = null;
+  $('emitBtn').textContent = emitting ? 'Emit: ON' : 'Emit: OFF';
+  $('emitBtn').className = emitting ? 'on' : '';
+  $('modeBtn').textContent = pulsed ? `Pulsed ${S.pulseMs} ms` : 'Continuous';
+  updateHeader();
+  if (!gain) return;
+  if (!emitting) return rampTo(0, FADE);
+  if (!pulsed) return rampTo(volume, FADE);
+  let on = true; rampTo(volume, PULSE_RAMP);
+  pulseTimer = setInterval(() => { on = !on; rampTo(on ? volume : 0, PULSE_RAMP); }, S.pulseMs);
+}
+// ---------- masking noise ----------
+// Looping pink noise through 4 cascaded low-passes at 6 kHz (≈ -75 dB at 17.8 kHz), so it
+// masks the audible whine a little without raising the noise floor where we detect.
+let maskGain = null;
+function buildMask() {
+  const len = ctx.sampleRate * 4, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;   // Paul Kellet pink-noise filter
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.96900 * b2 + w * 0.1538520;
+    b3 = 0.86650 * b3 + w * 0.3104856; b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
+    d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926;
+  }
+  const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+  let node = src;
+  for (let i = 0; i < 4; i++) { const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 6000; node.connect(f); node = f; }
+  maskGain = ctx.createGain(); maskGain.gain.value = 0;
+  node.connect(maskGain); maskGain.connect(ctx.destination); src.start();
+  setMask(+$('mask').value);
+}
+function setMask(v) {
+  $('maskVal').textContent = v ? v.toFixed(2) : 'off';
+  if (!maskGain) return;
+  const t = ctx.currentTime, g = maskGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(v * v, t + 0.3);  // squared: finer control at low levels
+}
+
+// ---------- emitter: frequency hopping ----------
+// One tone at a time at constant amplitude, gliding to the next tone every S.dwell ms.
+// (Simultaneous tones would intermodulate in the speaker into an audible difference tone.)
+function glideTo(f) {
+  const t = ctx.currentTime, p = osc.frequency;
+  p.cancelScheduledValues(t);
+  p.setValueAtTime(p.value, t);
+  p.linearRampToValueAtTime(f, t + GLIDE);
+}
+function restartHop() {
+  clearInterval(hopTimer); hopTimer = null; hopIdx = 0;
+  if (!osc) return;
+  glideTo(toneFreq(mySlot, 0));
+  if (S.tones > 1) hopTimer = setInterval(() => { hopIdx = (hopIdx + 1) % S.tones; glideTo(toneFreq(mySlot, hopIdx)); }, S.dwell);
+}
+
+// ---------- DSP ----------
+const dbv = v => Number.isFinite(v) ? v : -200;     // -Infinity on digital silence
+const scratch = new Float32Array(1024);
+// Noise floor near bin k = median of bins within ±250 Hz. The median ignores the few bins
+// that hold tones (ours or other phones'), so tones can sit close together.
+function noiseDb(k, binHz) {
+  const r = Math.min(500, Math.round(250 / binHz)), n = spec.length;
+  let c = 0;
+  for (let j = Math.max(0, k - r); j <= Math.min(n - 1, k + r); j++) scratch[c++] = dbv(spec[j]);
+  return c ? scratch.subarray(0, c).sort()[c >> 1] : NaN;
+}
+// SNR of one tone = strongest bin within ±D Hz (Doppler: ~60 Hz per 1 m/s at 20 kHz) minus
+// the local noise floor. Pure noise reads ~8 dB here (max of many bins vs. median).
+function toneSnr(f, binHz) {
+  const n = spec.length, k = Math.round(f / binHz), w = Math.max(1, Math.round(S.doppler / binHz));
+  if (k + w >= n) return [NaN, NaN];                // above Nyquist
+  let peak = -Infinity, pj = k;
+  for (let j = k - w; j <= k + w; j++) if (dbv(spec[j]) > peak) { peak = dbv(spec[j]); pj = j; }
+  return [peak - noiseDb(k, binHz), (pj - k) * binHz];
+}
+
+function tick() {
+  if (!analyser) return;
+  analyser.getFloatFrequencyData(spec);
+  const binHz = ctx.sampleRate / analyser.fftSize, now = performance.now();
+  for (let s = 0; s < S.slots; s++) {
+    // The emitting phone plays one of its tones at a time -> slot value = best tone right now.
+    let best = NaN, bt = 0, off = NaN;
+    for (let t = 0; t < S.tones; t++) {
+      const [v, o] = toneSnr(toneFreq(s, t), binHz), h = histT[s][t];
+      h.push({ t: now, v });
+      while (h.length && now - h[0].t > 1000) h.shift();
+      toneMax1[s][t] = Math.max(...h.map(p => dbv(p.v)));
+      if (Number.isFinite(v) && !(v <= best)) { best = v; bt = t; off = o; }
+    }
+    live[s] = best; peakOff[s] = off;
+    const h = hist[s]; h.push({ t: now, v: best });
+    while (h.length && now - h[0].t > 1000) h.shift();
+    let sum = 0, c = 0;                              // 1 s rolling average (dB) over all hops
+    for (const p of h) if (Number.isFinite(p.v)) { sum += p.v; c++; }
+    avg1[s] = c ? sum / c : NaN;
+    updateRange(s);
+    if (rec) pushBuf(rec, s, best, bt);
+    if (ivl) pushBuf(ivl, s, best, bt);
+  }
+  if (rec) { if (now >= rec.end) finishRecord(); else $('recBtn').textContent = `Recording… ${((rec.end - now) / 1000).toFixed(1)} s`; }
+  ivLive();
+  killTick(binHz, now);
+  renderSlots();
+  renderKill(now);
+}
+
+// ---------- slot rows ----------
+function drawSlotRows() {
+  const box = $('slots'); box.innerHTML = '';
+  for (let i = 0; i < S.slots; i++) {
+    const r = document.createElement('div');
+    r.className = 'slot'; r.id = 'slot' + i;
+    r.innerHTML = `<div class="name"></div><div class="num live"></div><div class="num avg"></div><div class="badge"></div><div class="bar"><i></i></div><div class="tones"></div>`;
+    r.querySelector('.name').innerHTML = `<span style="color:${COLORS[i][0]}">●</span> S${i}` + (i === mySlot ? ' <small>self</small>' : '') + '<small class="shift"></small>';
+    r.querySelector('.bar i').style.background = COLORS[i][0];
+    box.appendChild(r);
+  }
+}
+function renderSlots() {
+  let best = -1;
+  for (let i = 0; i < S.slots; i++) if (i !== mySlot && inRange[i] && (best < 0 || avg1[i] > avg1[best])) best = i;
+  const near = [...Array(S.slots).keys()].filter(i => i !== mySlot && inRange[i]);
+  const kb = $('killBanner');
+  kb.className = near.length ? 'in' : '';
+  kb.textContent = near.length ? '🔪 within 2 m: ' + near.map(slotName).join(', ') : 'nobody within 2 m';
+  for (let i = 0; i < S.slots; i++) {
+    const r = $('slot' + i); if (!r) continue;
+    r.querySelector('.live').textContent = f1(live[i]);
+    r.querySelector('.shift').textContent = live[i] >= NOISE_OK && Number.isFinite(peakOff[i]) ? ` ${peakOff[i] >= 0 ? '+' : ''}${peakOff[i].toFixed(0)} Hz` : '';
+    r.querySelector('.avg').textContent = f1(avg1[i]);
+    r.querySelector('.tones').textContent = slotFreqs(i).map((f, t) => `${(f / 1000).toFixed(2)}k ${toneMax1[i][t] > -100 ? toneMax1[i][t].toFixed(0) : '–'}`).join(' · ');
+    const bd = r.querySelector('.badge'); bd.className = 'badge ' + (inRange[i] ? 'IN' : 'OUT'); bd.textContent = inRange[i] ? '≤2 m' : '—';
+    r.querySelector('.bar i').style.width = Math.max(0, Math.min(100, (avg1[i] || 0) / 50 * 100)) + '%';
+    r.classList.toggle('best', i === best);
+  }
+}
+
+// ---------- header / device ----------
+function micFlags() {
+  if (!micTrack) return '';
+  let s = {}; try { s = micTrack.getSettings() || {}; } catch (e) { /* ignore */ }
+  const f = k => `${k.replace('Cancellation', 'Canc').replace('Suppression', 'Supp').replace('GainControl', 'Gain')} ${s[k] === false ? '✓off' : s[k] === true ? '✗ON' : '?n/a'}`;
+  return ['echoCancellation', 'noiseSuppression', 'autoGainControl'].map(f).join(' · ');
+}
+function updateHeader() {
+  $('hMe').innerHTML = `<span style="color:${COLORS[mySlot][0]}">●</span> ${slotName(mySlot)} · ${slotFreqs(mySlot).join(' / ')} Hz`;
+  if (!ctx) return;
+  $('hEmit').textContent = !emitting ? 'OFF' : (pulsed ? `ON, pulsed ${S.pulseMs} ms` : 'ON, continuous') +
+    ` · vol ${volume.toFixed(2)}` + (S.tones > 1 ? ` · hopping ${S.tones} tones / ${S.dwell} ms` : '');
+  const binHz = analyser ? (ctx.sampleRate / analyser.fftSize).toFixed(2) : '?';
+  const warn = [];
+  if (S.spacing < 2 * S.doppler + 10) warn.push(`spacing ${S.spacing} too small for Doppler ±${S.doppler}`);
+  const top = killFreq(S.slots - 1);
+  if (top + S.doppler + 250 > ctx.sampleRate / 2) warn.push(`top tone ${top} Hz too close to Nyquist ${ctx.sampleRate / 2}`);
+  $('hAudio').textContent = `${ctx.sampleRate} Hz · FFT ${S.fft} · bin ${binHz} Hz · ctx ${ctx.state}` + warn.map(w => ' · ⚠ ' + w).join('');
+  $('hAudio').style.color = ctx.state === 'running' && !warn.length ? '' : 'var(--bad)';
+  $('hMic').textContent = micFlags();
+  $('hWake').textContent = !('wakeLock' in navigator) ? 'unsupported – keep screen awake manually' : wakeLock ? 'held ✓' : 'not held';
+}
+function devInfo() {
+  const kv = [['UA', shortUA], ['Sample rate', ctx ? ctx.sampleRate + ' Hz' : '?'], ['audioSession', navigator.audioSession ? 'yes (' + navigator.audioSession.type + ')' : 'no'],
+    ['wakeLock', 'wakeLock' in navigator ? 'yes' : 'no'], ['Mic label', micTrack ? micTrack.label || '?' : '?'], ['Full UA', ua]];
+  $('dev').innerHTML = '';
+  kv.forEach(([k, v]) => { const b = document.createElement('b'); b.textContent = k; const s = document.createElement('span'); s.textContent = v; s.style.wordBreak = 'break-all'; $('dev').append(b, s); });
+}
+async function requestWake() {
+  if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return updateHeader();
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; updateHeader(); });
+  } catch (e) { wakeLock = null; }
+  updateHeader();
+}
+
+// ---------- calibration logger ----------
+const COLS = ['time', 'end_time', 'duration_s', 'kind', 'my_slot', 'src_slot', 'src_freq_hz', 'distance_m', 'condition', 'avg_db', 'min_db', 'max_db', 'samples', 'in_range_pct',
+  'tones_db', 'mode', 'fft', 'note', 'device', 'all_slots_avg_db', 'doppler_hz'];
+const stat = a => a.length ? { avg: a.reduce((x, y) => x + y, 0) / a.length, min: Math.min(...a), max: Math.max(...a), n: a.length } : { avg: NaN, min: NaN, max: NaN, n: 0 };
+const newBuf = () => ({ t0: performance.now(), wall0: new Date().toISOString(),
+  samples: [...Array(MAXS)].map(() => []), tone: grid(MAXS, MAXT, () => []), inr: [...Array(MAXS)].map(() => []) });
+function pushBuf(b, s, best, bt) {
+  b.inr[s].push(inRange[s] ? 1 : 0);
+  if (Number.isFinite(best)) { b.samples[s].push(best); b.tone[s][bt].push(best); }
+}
+// Turns a buffer into a CSV row, stores it, and returns [row, stat of the source slot].
+function saveBuf(b, kind, note) {
+  const stats = b.samples.slice(0, S.slots).map(stat);
+  const st = stats[srcSlot];
+  const inr = b.inr[srcSlot], inPct = inr.length ? Math.round(100 * inr.reduce((a, b) => a + b, 0) / inr.length) : '';
+  // per-tone average while that tone was the one being received (shows multipath / dead tones)
+  const tones = b.tone[srcSlot].slice(0, S.tones).map(a => f1(stat(a).avg)).join('/');
+  const r = { time: b.wall0, end_time: new Date().toISOString(), duration_s: r1((performance.now() - b.t0) / 1000), kind,
+    my_slot: mySlot, src_slot: srcSlot, src_freq_hz: slotFreqs(srcSlot).join('/'), distance_m: dist, condition: cond,
+    avg_db: r1(st.avg), min_db: r1(st.min), max_db: r1(st.max), samples: st.n, in_range_pct: inPct, tones_db: tones,
+    mode: (!emitting ? 'silent' : pulsed ? 'pulsed' + S.pulseMs : 'cont') + (S.tones > 1 ? `-hop${S.tones}x${S.dwell}` : ''), fft: S.fft, note, device: shortUA,
+    doppler_hz: S.doppler, all_slots_avg_db: stats.map((s, i) => `${i}:${f1(s.avg)}`).join(' ') };
+  rows.push(r); store.set('rows', rows); renderTable();
+  return [r, st];
+}
+function startRecord() {
+  if (!analyser || rec) return;
+  rec = newBuf(); rec.end = rec.t0 + 3000;
+  $('recBtn').disabled = true; $('recMsg').textContent = '';
+}
+function finishRecord() {
+  const b = rec; rec = null;
+  const [r, st] = saveBuf(b, 'fixed3s', $('note').value);
+  $('recBtn').disabled = false; $('recBtn').textContent = '● Record 3 s';
+  $('recMsg').textContent = `Saved: S${r.src_slot} @ ${r.distance_m} m, ${r.condition} → avg ${f1(st.avg)} dB (min ${f1(st.min)}, max ${f1(st.max)}) · in range ${r.in_range_pct}% of the time`;
+}
+
+// ---------- interval recording: record continuously, cut labelled chunks ----------
+let ivl = null, ivCount = 0;
+function ivStart() {
+  if (!analyser) { $('recMsg').textContent = 'Press START first.'; return; }
+  ivl = newBuf(); ivCount = 0;
+  $('ivBtn').style.display = 'none'; $('ivBox').style.display = ''; ivLive();
+}
+function ivCut() {
+  if (!ivl) return;
+  const note = $('ivNote').value.trim() || `interval ${ivCount + 1}`;
+  const [r, st] = saveBuf(ivl, 'interval', note);
+  ivCount++; ivl = newBuf(); $('ivNote').value = '';
+  $('recMsg').textContent = `Interval ${ivCount} saved (${r.duration_s} s, "${note}"): avg ${f1(st.avg)} dB, min ${f1(st.min)}, max ${f1(st.max)} · in range ${r.in_range_pct}%`;
+  ivLive();
+}
+function ivDrop() { if (ivl) { ivl = newBuf(); $('recMsg').textContent = 'Current interval discarded – recording a fresh one.'; ivLive(); } }
+function ivStop() {
+  if (!ivl) return;
+  const secs = (performance.now() - ivl.t0) / 1000;
+  if (secs > 2 && !confirm(`Stop? The last ${secs.toFixed(0)} s are not saved yet (press "Create interval" to keep them).`)) return;
+  ivl = null; $('ivBtn').style.display = ''; $('ivBox').style.display = 'none';
+  $('recMsg').textContent = `Interval recording stopped – ${ivCount} interval(s) saved.`;
+}
+function ivLive() {
+  if (!ivl) return;
+  const secs = (performance.now() - ivl.t0) / 1000, st = stat(ivl.samples[srcSlot]);
+  $('ivLive').textContent = `🔴 interval ${ivCount + 1}: ${secs.toFixed(1)} s · S${srcSlot} avg ${f1(st.avg)} dB · ${ivCount} saved`;
+}
+function renderTable() {
+  const t = $('tbl'); t.innerHTML = '<tr><th>time</th><th>s</th><th>src</th><th>m</th><th>cond</th><th>avg</th><th>min</th><th>max</th><th>in%</th><th>note</th></tr>';
+  rows.slice().reverse().forEach(r => {
+    const tr = document.createElement('tr');
+    [String(r.time).slice(11, 19), r.duration_s ?? 3, 'S' + r.src_slot, r.distance_m, r.condition, r.avg_db, r.min_db, r.max_db, r.in_range_pct, r.note].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+    t.appendChild(tr);
+  });
+}
+const csvCell = v => { v = v == null ? '' : String(v); return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+const toCSV = () => [COLS.join(',')].concat(rows.map(r => COLS.map(k => csvCell(r[k])).join(','))).join('\n') + '\n';
+async function copyCSV() {
+  const txt = toCSV();
+  try { await navigator.clipboard.writeText(txt); $('recMsg').textContent = `Copied ${rows.length} rows.`; }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (x) { /* ignore */ }
+    ta.remove(); $('recMsg').textContent = ok ? `Copied ${rows.length} rows.` : 'Copy failed – use Download.';
+  }
+}
+function downloadCSV() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([toCSV()], { type: 'text/csv' }));
+  a.download = `sonar-S${mySlot}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------- settings ----------
+function bindSettings() {
+  const map = { sBase: 'base', sSpacing: 'spacing', sSlots: 'slots', sTones: 'tones', sDwell: 'dwell', sDoppler: 'doppler', sFft: 'fft',
+    sSmooth: 'smooth', sKill: 'kill', sHyst: 'hyst', sKillHold: 'killHold', sKillGrace: 'killGrace', sPulse: 'pulseMs', sSession: 'session' };
+  const lim = { killHold: [0, 30], killGrace: [0, 10], hyst: [0, 20], smooth: [0, 0.95], slots: [1, MAXS], tones: [1, MAXT], dwell: [150, 5000], doppler: [5, 150], pulseMs: [150, 5000] };
+  Object.entries(map).forEach(([id, k]) => {
+    const el = $(id); el.value = S[k];
+    el.onchange = () => {
+      let v = k === 'session' ? el.value : parseFloat(el.value);
+      if (k !== 'session' && !Number.isFinite(v)) { el.value = S[k]; return; }
+      if (lim[k]) v = Math.max(lim[k][0], Math.min(lim[k][1], v));
+      if (k === 'slots' || k === 'tones') v = Math.round(v);
+      S[k] = v; el.value = v; store.set('settings5', S);
+      if (['base', 'spacing', 'slots', 'tones', 'dwell'].includes(k)) {
+        mySlot = clampSlot(mySlot); srcSlot = clampSlot(srcSlot);
+        drawPickers(); drawSlotRows(); drawKillBtns(); resetHist(); restartHop();
+      }
+      if ((k === 'fft' || k === 'smooth') && analyser) applyAnalyser();
+      if (k === 'pulseMs') applyEmit();
+      if (k === 'session' && navigator.audioSession && v !== 'auto') { try { navigator.audioSession.type = v; } catch (e) { /* ignore */ } }
+      updateHeader();
+    };
+  });
+}
+
+// ---------- wiring ----------
+$('start').onclick = start;
+$('emitBtn').onclick = () => { emitting = !emitting; applyEmit(); };
+$('modeBtn').onclick = () => { pulsed = !pulsed; applyEmit(); };
+$('mask').oninput = e => setMask(+e.target.value);
+$('vol').oninput = e => { volume = +e.target.value; $('volVal').textContent = volume.toFixed(2); if (emitting && !pulsed) rampTo(volume, 0.08); updateHeader(); };
+$('recBtn').onclick = startRecord;
+$('copyBtn').onclick = copyCSV;
+$('ivBtn').onclick = ivStart;
+$('respawn').onclick = respawn;
+$('ivCut').onclick = ivCut;
+$('ivDrop').onclick = ivDrop;
+$('ivStop').onclick = ivStop;
+$('ivNote').onkeydown = e => { if (e.key === 'Enter') ivCut(); };
+$('dlBtn').onclick = downloadCSV;
+$('clearBtn').onclick = () => { if (confirm(`Delete all ${rows.length} recorded rows?`)) { rows = []; store.set('rows', rows); renderTable(); } };
+// iOS may suspend/interrupt the context; any tap or returning to the tab resumes it.
+document.addEventListener('pointerdown', () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !ctx) return;
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  if (!wakeLock) requestWake();
+});
+$('volVal').textContent = volume.toFixed(2); setMask(0);
+drawPickers(); bindSettings(); updateHeader();
+</script>
+</body>
+</html>

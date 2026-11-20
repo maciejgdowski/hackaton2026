@@ -1,0 +1,173 @@
+import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+
+export class GameError extends Error {
+  constructor(message, status = 400) { super(message); this.status = status; }
+}
+
+// Kill rules. The 2 m check happens on the impostor's phone (sonar). GPS can't see 2 m, so the
+// server only rejects kills that are clearly impossible: both fixes fresh and > KILL_RANGE_M apart.
+export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 30000, GAME_DURATION_MS = 10 * 60000;
+
+// Sonar: every player gets a slot = their own near-ultrasonic frequency (one tone per phone).
+// Phones must stay well below the mic's limit, so slots are capped at 8 (17.8 – 19.9 kHz).
+export const SONAR = { base: 17800, spacing: 300, slots: 8 };
+export const slotFreq = slot => SONAR.base + slot * SONAR.spacing;
+
+// Great-circle distance in metres.
+export function distanceM(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad, dLon = (b.longitude - a.longitude) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+export class Game {
+  constructor({ now = Date.now, choose = randomInt, duration = GAME_DURATION_MS } = {}) {
+    this.now = now;
+    this.choose = choose;
+    this.duration = duration;
+    this.players = new Map();
+    this.sessions = new Map();
+    this.phase = 'lobby';
+    this.hostId = null;
+    this.zone = null;
+    this.result = null;
+    this.lastKillAt = null;
+  }
+
+  join(name) {
+    if (this.phase !== 'lobby') throw new GameError('This game has already started.', 409);
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 24)
+      throw new GameError('Choose a name between 1 and 24 characters.');
+    if (this.players.size >= SONAR.slots) throw new GameError(`The lobby is full (${SONAR.slots} players max).`, 409);
+    if ([...this.players.values()].some(p => p.name.toLowerCase() === name.trim().toLowerCase()))
+      throw new GameError('That name is already taken.', 409);
+    const token = randomBytes(32).toString('hex');
+    const used = new Set([...this.players.values()].map(p => p.slot));
+    let slot = 0; while (used.has(slot)) slot++;             // lowest free frequency slot
+    const player = { id: randomUUID(), name: name.trim(), slot, role: null, alive: true, location: null, snapshot: null, nextUpdateAt: null };
+    this.players.set(player.id, player);
+    this.sessions.set(token, player.id);
+    this.hostId ??= player.id;
+    return token;
+  }
+
+  authenticate(token) {
+    const player = this.players.get(this.sessions.get(token));
+    if (!player) throw new GameError('Join the game to continue.', 401);
+    return player;
+  }
+
+  setSound(player, ready) { player.soundReady = ready === true; }
+
+  updateLocation(player, location) {
+    const { latitude, longitude, accuracy } = location ?? {};
+    if (![latitude, longitude, accuracy].every(Number.isFinite) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || accuracy < 0 || accuracy > 100000)
+      throw new GameError('Invalid coordinates or accuracy.');
+    player.location = { latitude, longitude, accuracy, recordedAt: this.now() };
+  }
+
+  start(player) {
+    if (player.id !== this.hostId) throw new GameError('Only the host can start the game.', 403);
+    if (this.phase !== 'lobby') throw new GameError('The game has already started.', 409);
+    if (this.players.size < 2) throw new GameError('At least two players are required.', 409);
+    if (!player.location || this.now() - player.location.recordedAt > 15000)
+      throw new GameError('Get a fresh location before starting.', 409);
+    this.zone = { latitude: player.location.latitude, longitude: player.location.longitude, radius: 100 };
+    const players = [...this.players.values()];
+    const impostor = this.choose(players.length);
+    this.phase = 'playing';
+    this.startedAt = this.now();
+    this.endsAt = this.startedAt + this.duration;
+    this.lastKillAt = null;
+    players.forEach((p, i) => {
+      p.role = i === impostor ? 'impostor' : 'regular';
+      p.alive = true;
+      this.release(p);
+    });
+  }
+
+  // Impostor kills a living regular player who is close by.
+  kill(killer, targetId) {
+    this.checkEnd();
+    if (this.phase !== 'playing') throw new GameError('The game is not running.', 409);
+    if (killer.role !== 'impostor') throw new GameError('Only the impostor can kill.', 403);
+    if (!killer.alive) throw new GameError('You are out of the game.', 403);
+    const target = this.players.get(targetId);
+    if (!target || target === killer) throw new GameError('Unknown target.', 404);
+    if (!target.alive) throw new GameError('That player is already out.', 409);
+    const now = this.now();
+    if (this.lastKillAt !== null && now - this.lastKillAt < KILL_COOLDOWN_MS)
+      throw new GameError(`Kill cooling down (${Math.ceil((KILL_COOLDOWN_MS - (now - this.lastKillAt)) / 1000)} s).`, 429);
+    const fresh = p => p.location && now - p.location.recordedAt <= KILL_FIX_MAX_AGE_MS;
+    if (fresh(killer) && fresh(target) && distanceM(killer.location, target.location) > KILL_RANGE_M)
+      throw new GameError('Target is too far away.', 409);
+    target.alive = false;
+    target.diedAt = now;
+    target.killedBy = killer.id;
+    this.lastKillAt = now;
+    this.checkEnd();
+  }
+
+  // Impostor wins when no more than one regular is alive (they can't be stopped 1-on-1);
+  // regular players win if they survive until the timer runs out.
+  checkEnd() {
+    if (this.phase !== 'playing') return;
+    const players = [...this.players.values()];
+    const regularsAlive = players.filter(p => p.role === 'regular' && p.alive).length;
+    const totalRegulars = players.filter(p => p.role === 'regular').length;
+    let winner = null, reason = null;
+    if (regularsAlive === 0 || (totalRegulars > 1 && regularsAlive <= 1)) { winner = 'impostor'; reason = 'The impostor took out the crew.'; }
+    else if (this.now() >= this.endsAt) { winner = 'regular'; reason = 'Time ran out – the crew survived.'; }
+    if (!winner) return;
+    this.phase = 'ended';
+    const impostor = players.find(p => p.role === 'impostor');
+    this.result = { winner, reason, impostorId: impostor.id, impostorName: impostor.name, endedAt: this.now() };
+  }
+
+  // Host returns everyone to a fresh lobby (same players, roles cleared).
+  reset(player) {
+    if (player.id !== this.hostId) throw new GameError('Only the host can start a new round.', 403);
+    if (this.phase !== 'ended') throw new GameError('The game is still running.', 409);
+    this.phase = 'lobby'; this.zone = null; this.result = null; this.startedAt = undefined; this.endsAt = undefined; this.lastKillAt = null;
+    for (const p of this.players.values()) Object.assign(p, { role: null, alive: true, snapshot: null, snapshotAt: null, nextUpdateAt: null, diedAt: undefined, killedBy: undefined });
+  }
+
+  release(player) {
+    const now = this.now();
+    player.snapshot = [...this.players.values()].filter(p => p.alive).map(p => ({
+      id: p.id, name: p.name,
+      location: p.location && now - p.location.recordedAt <= 30000 ? { ...p.location } : null
+    }));
+    player.snapshotAt = now;
+    player.nextUpdateAt = now + (player.role === 'impostor' ? 10000 : 120000);
+  }
+
+  state(player) {
+    // The cache belongs to the authenticated player, never the request/connection.
+    // Polling faster, reconnecting, or supplying a different role cannot bypass it.
+    this.checkEnd();
+    if (this.phase === 'playing' && this.now() >= player.nextUpdateAt) this.release(player);
+    const killer = player.killedBy && this.players.get(player.killedBy);
+    return {
+      phase: this.phase, serverTime: this.now(), hostId: this.hostId,
+      self: { id: player.id, name: player.name, slot: player.slot, role: player.role, alive: player.alive, diedAt: player.diedAt ?? null },
+      // Who is out is public (like a body being found); who did it stays secret until the end.
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, alive: p.alive, sound: !!p.soundReady })),
+      sonar: SONAR,
+      zone: this.zone, startedAt: this.startedAt ?? null, endsAt: this.endsAt ?? null,
+      killCooldownUntil: player.role === 'impostor' && this.lastKillAt !== null ? this.lastKillAt + KILL_COOLDOWN_MS : null,
+      result: this.result && { ...this.result, killedByName: killer ? killer.name : null },
+      positions: player.snapshot ?? [], snapshotAt: player.snapshotAt ?? null,
+      nextUpdateAt: player.nextUpdateAt,
+      updateInterval: this.phase === 'playing' ? (player.role === 'impostor' ? 10 : 120) : null
+    };
+  }
+
+  leave(player) {
+    if (this.phase !== 'lobby') throw new GameError('Players cannot leave the roster after the game starts.', 409);
+    this.players.delete(player.id);
+    for (const [token, id] of this.sessions) if (id === player.id) this.sessions.delete(token);
+    if (this.hostId === player.id) this.hostId = this.players.keys().next().value ?? null;
+  }
+}

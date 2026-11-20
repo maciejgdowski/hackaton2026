@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fieldwork · Multiplayer map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="./style.css">
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script defer src="./sonar.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header><a href="./" class="brand"><span class="brand-icon">◎</span> FIELDWORK</a><span class="tag">A game in the real world</span></header>
+  <main>
+    <aside>
+      <div class="eyebrow">GET OUT. BLEND IN.</div>
+      <h1>Same ground.<br>Different sides.</h1>
+      <p class="intro">One zone. One hidden impostor. Find your place on the map.</p>
+      <section id="entry">
+        <form id="join-form"><label for="name">Your player name</label><input id="name" maxlength="24" required autocomplete="nickname" placeholder="Enter your name"><button>Join the game</button></form>
+        <p class="hint">The first player becomes the host. Bring at least one other player to start.</p>
+      </section>
+      <section id="session" hidden>
+        <div class="section-heading"><h2 id="phase">Lobby</h2><span id="count" class="pill"></span></div>
+        <div id="role" class="role" hidden></div>
+        <div id="result" class="result" hidden></div>
+        <p id="timer" class="timer" hidden></p>
+        <div id="targets" hidden>
+          <div class="eyebrow">TARGETS</div>
+          <p id="kill-hint" class="hint"></p>
+          <ul id="target-list"></ul>
+        </div>
+        <ul id="players"></ul>
+        <button id="sound" class="secondary">Enable sound &amp; mic</button>
+        <p id="sound-status" class="hint" role="status">Sound is how phones sense each other within 2 m. Turn off silent mode, volume up, no Bluetooth headphones.</p>
+        <button id="location" class="secondary">Enable location</button>
+        <p id="gps-status" class="hint" role="status">Location is needed to appear on the map.</p>
+        <button id="start" hidden>Start game</button>
+        <button id="reset" hidden>New round</button>
+        <p id="waiting" class="hint"></p>
+        <button id="leave" class="text-button">Leave lobby</button>
+      </section>
+      <p id="error" role="alert" hidden></p>
+      <div class="rules"><span>100 m <small>PLAY ZONE</small></span><span>2–8 <small>PLAYERS</small></span><span>2 m <small>KILL RANGE</small></span></div>
+    </aside>
+    <section class="map-panel" aria-label="Game map">
+      <div class="map-top"><div><span class="eyebrow">THE FIELD</span><h2 id="map-title">Your surroundings become the game.</h2></div><button id="recenter" class="secondary" hidden>View zone</button></div>
+      <div id="map" aria-label="Player positions and game zone"></div>
+      <div id="map-placeholder"><div class="radar"><i></i></div><h2>A little mystery.<br>A hundred meters.</h2><p>The map opens when the host starts the game.</p></div>
+      <div class="map-bottom"><span id="update-status" role="status">Waiting for the game to begin</span><span>◎ 100 m radius</span></div>
+    </section>
+  </main>
+  <div id="dead" hidden>
+    <h1>📵 SIGNAL LOST</h1>
+    <p>You were taken out. Your position is no longer shared.</p>
+    <p class="hint">Stay quiet – the round continues without you.</p>
+    <button id="spectate" class="secondary">Watch the map</button>
+  </div>
+</body>
+</html>
