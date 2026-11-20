@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Game, slotFreq, GATE_HOLD_MS, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
+import { Game, slotFreq, GATE_HOLD_MS, GONE_MS, ENDED_AUTO_RESET_MS, KILL_FIX_MAX_AGE_MS, KILL_COOLDOWN_MS, GAME_DURATION_MS } from '../game.js';
 
 function setup() {
   let time = 1000000;
@@ -41,7 +41,7 @@ test('one impostor, private roles, frozen 100 m zone and closed roster', () => {
   assert.ok(state.positions.every(p => !('role' in p)));
   game.updateLocation(host, { ...location, latitude: 51 });
   assert.equal(game.state(host).zone.latitude, location.latitude);
-  assert.throws(() => game.join('Late'), /already started/);
+  assert.throws(() => game.join('Late'), /in progress/);
   assert.throws(() => game.start(host), /already started/);
 });
 
@@ -253,4 +253,34 @@ test('sonar gate: on only while someone is within ~15 m on GPS, holds 10 s, fail
   assert.equal(game.state(a).sonarOn, true);
   time += GATE_HOLD_MS + 30001;                               // all GPS stale -> fail open
   assert.equal(game.state(b).sonarOn, true);
+});
+
+test('self-healing: abandoned round is wiped, finished round reopens the lobby, gone host is replaced', () => {
+  let time = 1000000;
+  const game = new Game({ now: () => time, choose: () => 1 });
+  const toks = ['A', 'B', 'C'].map(n => game.join(n));
+  const [a, b, c] = toks.map(t => game.authenticate(t));
+  [a, b, c].forEach(p => game.updateLocation(p, { latitude: 52.2, longitude: 21.1, accuracy: 5 }));
+  game.start(a);
+  assert.throws(() => game.join('Late'), /in progress \(10:00 left\)/);
+  time += GONE_MS;                                   // everybody closed the tab mid-round
+  game.join('Fresh');
+  assert.equal(game.phase, 'lobby');
+  assert.deepEqual([...game.players.values()].map(p => p.name), ['Fresh']);
+
+  // finished round with an absent host
+  time = 5000000;
+  const g2 = new Game({ now: () => time, choose: () => 0 });
+  const t2 = ['Host', 'X', 'Y'].map(n => g2.join(n));
+  const [h, x, y] = t2.map(t => g2.authenticate(t));
+  [h, x, y].forEach(p => g2.updateLocation(p, { latitude: 52.2, longitude: 21.1, accuracy: 5 }));
+  g2.start(h);
+  g2.kill(h, x.id);                                  // host is the impostor; 1 regular left -> ended
+  assert.equal(g2.phase, 'ended');
+  time += GONE_MS - 1; g2.authenticate(t2[2]);       // only Y keeps polling
+  time += 2; g2.authenticate(t2[2]);
+  assert.equal(g2.hostId, y.id);                     // host passed to someone present
+  for (let t = 0; t < ENDED_AUTO_RESET_MS; t += 10000) { time += 10000; g2.authenticate(t2[2]); }   // Y keeps polling
+  assert.equal(g2.phase, 'lobby');                   // back to the lobby without anyone pressing reset
+  assert.deepEqual([...g2.players.values()].map(p => p.name), ['Y']);
 });

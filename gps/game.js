@@ -11,6 +11,10 @@ export class GameError extends Error {
 // is on whenever GPS is missing/stale (fail open, so kills still work without GPS).
 // 30 m: phone GPS between two phones is often 15–30 m off, so 15 m missed real encounters.
 export const GATE_M = 30, GATE_SLACK_M = 10, GATE_HOLD_MS = 10000;
+// Self-healing (there is only one game): a phone polls every second, so a player not seen for
+// GONE_MS has closed the tab. Gone players leave the lobby; a round nobody is watching any more is
+// wiped; a finished round goes back to the lobby by itself; the host passes to someone present.
+export const GONE_MS = 45000, LOBBY_DROP_MS = 120000, ENDED_AUTO_RESET_MS = 90000;   // lobby: 2 min grace (screen lock)
 export const KILL_RANGE_M = 50, KILL_FIX_MAX_AGE_MS = 30000, KILL_COOLDOWN_MS = 30000, GAME_DURATION_MS = 10 * 60000;
 
 // Sonar: every player gets a slot = their own near-ultrasonic frequency (one tone per phone).
@@ -43,8 +47,34 @@ export class Game {
     this.lastKillAt = null;
   }
 
+  seen(p) { return this.now() - (p.lastSeen ?? 0) < GONE_MS; }
+
+  // Called before every request.
+  maintain() {
+    const players = [...this.players.values()];
+    if (this.phase !== 'lobby' && players.length && !players.some(p => this.seen(p))) {
+      // Everybody left mid-round or after it: start completely fresh.
+      this.players.clear(); this.sessions.clear(); this.hostId = null;
+      this.phase = 'lobby'; this.zone = null; this.result = null; this.startedAt = undefined; this.endsAt = undefined; this.lastKillAt = null;
+      return;
+    }
+    if (this.phase === 'ended' && this.now() - this.result.endedAt >= ENDED_AUTO_RESET_MS) this.backToLobby();
+    if (this.phase === 'lobby') for (const p of players) if (this.now() - (p.lastSeen ?? 0) >= LOBBY_DROP_MS) { this.players.delete(p.id); this.dropSessions(p); }
+    const host = this.players.get(this.hostId);
+    if (!host || !this.seen(host)) {
+      const next = [...this.players.values()].filter(p => this.seen(p) && this.hasSession(p)).sort((a, b) => b.lastSeen - a.lastSeen)[0];
+      if (next) this.hostId = next.id;
+    }
+  }
+
   join(name) {
-    if (this.phase !== 'lobby') throw new GameError('This game has already started.', 409);
+    this.maintain();
+    if (this.phase !== 'lobby') {
+      const left = this.endsAt ? Math.max(0, Math.ceil((this.endsAt - this.now()) / 1000)) : 0;
+      throw new GameError(this.phase === 'playing'
+        ? `A round is in progress (${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left). Try again when it ends.`
+        : 'A round just ended. The lobby opens again in a moment.', 409);
+    }
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 24)
       throw new GameError('Choose a name between 1 and 24 characters.');
     if (this.players.size >= SONAR.slots) throw new GameError(`The lobby is full (${SONAR.slots} players max).`, 409);
@@ -53,7 +83,7 @@ export class Game {
     const token = randomBytes(32).toString('hex');
     const used = new Set([...this.players.values()].map(p => p.slot));
     let slot = 0; while (used.has(slot)) slot++;             // lowest free frequency slot
-    const player = { id: randomUUID(), name: name.trim(), slot, role: null, alive: true, location: null, snapshot: null, nextUpdateAt: null };
+    const player = { id: randomUUID(), lastSeen: this.now(), name: name.trim(), slot, role: null, alive: true, location: null, snapshot: null, nextUpdateAt: null };
     this.players.set(player.id, player);
     this.sessions.set(token, player.id);
     this.hostId ??= player.id;
@@ -61,8 +91,10 @@ export class Game {
   }
 
   authenticate(token) {
+    this.maintain();
     const player = this.players.get(this.sessions.get(token));
     if (!player) throw new GameError('Join the game to continue.', 401);
+    player.lastSeen = this.now();
     return player;
   }
 
@@ -137,7 +169,11 @@ export class Game {
   reset(player) {
     if (player.id !== this.hostId) throw new GameError('Only the host can start a new round.', 403);
     if (this.phase !== 'ended') throw new GameError('The game is still running.', 409);
-    for (const p of [...this.players.values()]) if (!this.hasSession(p)) this.players.delete(p.id);   // quitters
+    this.backToLobby();
+  }
+
+  backToLobby() {
+    for (const p of [...this.players.values()]) if (!this.hasSession(p) || !this.seen(p)) { this.players.delete(p.id); this.dropSessions(p); }   // quitters / gone
     this.phase = 'lobby'; this.zone = null; this.result = null; this.startedAt = undefined; this.endsAt = undefined; this.lastKillAt = null;
     for (const p of this.players.values()) Object.assign(p, { role: null, alive: true, snapshot: null, snapshotAt: null, nextUpdateAt: null, diedAt: undefined, killedBy: undefined });
   }
