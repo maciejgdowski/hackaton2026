@@ -3,6 +3,9 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { Game, GameError } from './game.js';
 
+// URL prefix the app lives under (outofsignal.pl/gps or /app). Set BASE_PATH to change it.
+const BASE = '/' + (process.env.BASE_PATH || '/gps').replace(/^\/+|\/+$/g, '');
+
 export function createApp(game = new Game()) {
   const app = express();
   app.disable('x-powered-by');
@@ -17,8 +20,8 @@ export function createApp(game = new Game()) {
     });
     next();
   });
-  app.get('/', (req, res) => res.redirect(308, '/gps/'));
-  app.get('/gps', (req, res) => res.redirect(308, '/gps/'));
+  app.get('/', (req, res) => res.redirect(308, `${BASE}/`));
+  app.get(BASE, (req, res) => res.redirect(308, `${BASE}/`));
 
   const api = express.Router();
   api.use((req, res, next) => {
@@ -69,8 +72,8 @@ export function createApp(game = new Game()) {
     game.leave(res.locals.player);
     res.json({ ok: true });
   });
-  app.use('/gps/api', api);
-  app.use('/gps', express.static(fileURLToPath(new URL('./public/', import.meta.url)), {
+  app.use(`${BASE}/api`, api);
+  app.use(BASE, express.static(fileURLToPath(new URL('./public/', import.meta.url)), {
     dotfiles: 'deny', etag: false, lastModified: false, cacheControl: false
   }));
   app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
@@ -92,6 +95,6 @@ export function createServer(game = new Game()) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
   createServer().listen(port, process.env.HOST || '0.0.0.0', () => {
-    console.log(`Fieldwork Express: http://localhost:${port}/gps/`);
+    console.log(`Out of Signal: http://localhost:${port}${BASE}/`);
   });
 }
