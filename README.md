@@ -1,4 +1,7 @@
 # PROJECT SET-UP
+
+See [SOCKET_API.md](./server/SOCKET_API.md) for Socket.IO events and frontend usage.
+
 0. you HAVE to be in the top directory (where the client and server folders are)
 1. `npm install`
 2. `npm run i` - runs installation process for backend and frontend
