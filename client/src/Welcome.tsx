@@ -1,6 +1,6 @@
 import "./Style.css";
 import "./MapBackground";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import MapBackground from "./MapBackground";
 
 export default function Welcome() {

@@ -30,6 +30,8 @@ export default function Lobby() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
+  const [startError, setStartError] = useState("");
+  const [isStarting, setIsStarting] = useState(false);
   const requestRef = useRef<{ lobbyId: string; promise: Promise<LobbyState> } | null>(null);
   const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
@@ -118,6 +120,8 @@ export default function Lobby() {
           setLobbyData(message.lobby);
         } else if (message.type === "lobby:closed") {
           navigate("/");
+        } else if (message.type === "game:started") {
+          navigate(`/game/${lobbyId}`);
         }
       } catch (messageError) {
         console.error("Could not read lobby update:", messageError);
@@ -160,6 +164,29 @@ export default function Lobby() {
     }
   }
 
+  async function requestGameStart() {
+  if (!lobbyId || !userId || isStarting) return;
+  setIsStarting(true);
+  setStartError("");
+  try {
+    const response = await fetch(
+      `${API_URL}/lobby/${encodeURIComponent(lobbyId)}/start?userId=${encodeURIComponent(userId)}`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error ?? "Could not start the game.");
+    }
+    navigate(`/game/${lobbyId}`);
+  } catch (error) {
+    setStartError(error instanceof Error ? error.message : "Could not start game.");
+  } finally {
+    setIsStarting(false);
+  }
+}
+
+
   const members = Object.entries(lobbyData?.members ?? {});
   const isAdmin = members.length > 0 && members[0][0] === userId;
 
@@ -188,9 +215,16 @@ export default function Lobby() {
           </div>
           </div>
           {!isLoading && !error && (isAdmin ? (
+<<<<<<< HEAD
             <div style={{ display: "flex", gap: "10vw" }}>
               <button style={{ width:"30vw", height:"10vh" }} onClick={disbandLobby}>Disband lobby</button>
               <button style={{ width:"30vw", height:"10vh" }} onClick={() => navigate(`/game/${lobbyId}`)}>Start game</button>
+=======
+            <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
+              <button onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
+              {startError && <p role="alert">{startError}</p>}
+              <button onClick={disbandLobby}>Disband / Abandon lobby</button>
+>>>>>>> 2d4e083d2962dc6d80a2ea933820e35077ed4322
             </div>
           ) : (
             <div style={{ display: "flex",  gap: "10vw" }}>
