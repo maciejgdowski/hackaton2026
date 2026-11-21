@@ -6,9 +6,10 @@
 //   - the kill charge grows only while in range; gaps shorter than GRACE_S pause it, longer gaps reset it
 //
 // URL overrides for field testing: ?db=NN (threshold), ?debug=1 (readout in game).
+import type { SonarConfig } from '@oos/shared';
 
 const params = new URLSearchParams(location.search);
-const dbOverride = parseFloat(params.get('db'));
+const dbOverride = parseFloat(params.get('db') ?? '');
 
 // 25 dB in / 20 dB out, tuned with tools/sonar-lab recordings
 // (27 dB let a 5–6 m kill through; 32 dB was too strict).
@@ -24,12 +25,37 @@ const FADE_S = 0.18;
 const TICK_MS = 100;
 const MAX_SLOTS = 16;
 
-let config = { base: 17_800, spacing: 300, slots: 8 };
-let ctx = null, oscillator = null, gain = null, analyser = null, spectrum = null, wakeLock = null;
-let mySlot = -1, emitting = false, listening = true, ready = false, lastTick = 0;
+export interface Proximity {
+  near: boolean;   // within ~2 m (or a short dropout)
+  heldS: number;   // seconds of kill charge
+  db: number;      // 1 s average SNR (NaN if unknown)
+}
+
+interface Sample {
+  t: number;
+  db: number;
+}
+
+let config: SonarConfig = { base: 17_800, spacing: 300, slots: 8 };
+let ctx: AudioContext | null = null;
+let oscillator: OscillatorNode | null = null;
+let gain: GainNode | null = null;
+let analyser: AnalyserNode | null = null;
+let spectrum = new Float32Array(0);
+let wakeLock: WakeLockSentinel | null = null;
+let mySlot = -1;
+let emitting = false;
+let listening = true;
+let ready = false;
+let lastTick = 0;
 
 // Per-slot tracking
-let history, averageDb, inRange, heldS, lastInRangeAt;
+let history: Sample[][] = [];
+let averageDb: number[] = [];
+let inRange: boolean[] = [];
+let heldS: number[] = [];
+let lastInRangeAt: number[] = [];
+
 function resetTracking() {
   history = Array.from({ length: MAX_SLOTS }, () => []);
   averageDb = new Array(MAX_SLOTS).fill(NaN);
@@ -39,20 +65,21 @@ function resetTracking() {
 }
 resetTracking();
 
-const frequencyOf = slot => config.base + slot * config.spacing;
-const finiteDb = v => (Number.isFinite(v) ? v : -200);
+const frequencyOf = (slot: number) => config.base + slot * config.spacing;
+const finiteDb = (v: number) => (Number.isFinite(v) ? v : -200);
 
 // ---------- signal analysis ----------
 
 const scratch = new Float32Array(1024);
-function noiseFloorDb(bin, binHz) {
+
+function noiseFloorDb(bin: number, binHz: number): number {
   const span = Math.min(500, Math.round(NOISE_SPAN_HZ / binHz));
   let count = 0;
   for (let j = Math.max(0, bin - span); j <= Math.min(spectrum.length - 1, bin + span); j++) scratch[count++] = finiteDb(spectrum[j]);
   return count ? scratch.subarray(0, count).sort()[count >> 1] : NaN;
 }
 
-function toneSnrDb(frequency, binHz) {
+function toneSnrDb(frequency: number, binHz: number): number {
   const bin = Math.round(frequency / binHz);
   const width = Math.max(1, Math.round(DOPPLER_HZ / binHz));
   if (bin + width >= spectrum.length) return NaN;
@@ -62,8 +89,11 @@ function toneSnrDb(frequency, binHz) {
 }
 
 function tick() {
-  if (!analyser) return;
-  if (!listening) { lastTick = 0; return; }
+  if (!analyser || !ctx) return;
+  if (!listening) {
+    lastTick = 0;
+    return;
+  }
 
   analyser.getFloatFrequencyData(spectrum);
   const binHz = ctx.sampleRate / analyser.fftSize;
@@ -96,8 +126,8 @@ function tick() {
 
 // ---------- audio ----------
 
-function fadeTo(volume) {
-  if (!gain) return;
+function fadeTo(volume: number) {
+  if (!gain || !ctx) return;
   const t = ctx.currentTime;
   gain.gain.cancelScheduledValues(t);
   gain.gain.setValueAtTime(gain.gain.value, t);
@@ -118,22 +148,26 @@ function resumeAudio() {
   if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
 }
 
-function explainMicError(error) {
-  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError')
+function explainMicError(error: unknown): Error {
+  const name = error instanceof DOMException ? error.name : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError')
     return new Error('Microphone permission denied. Allow it in the browser settings and reload.');
-  if (error?.name === 'NotReadableError')
-    return new Error('Microphone is busy (call or another app). Close it and try again.');
-  return error;
+  if (name === 'NotReadableError') return new Error('Microphone is busy (call or another app). Close it and try again.');
+  return error instanceof Error ? error : new Error(String(error));
 }
 
-// Must be called from a tap: iOS only allows audio and the mic after a user gesture.
+/** Must be called from a tap: iOS only allows audio and the mic after a user gesture. */
 async function start() {
   if (ready) return;
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia)
     throw new Error('Microphone needs HTTPS in Safari or Chrome (not an in-app browser).');
-  try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch { /* not supported */ }
+  // iOS: play and record at the same time
+  const audioSession = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  try { if (audioSession) audioSession.type = 'play-and-record'; } catch { /* not supported */ }
 
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const AudioContextClass = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const audio = new AudioContextClass();
+  ctx = audio;
   resumeAudio(); // not awaited: the tap must still count as a gesture for getUserMedia
 
   try {
@@ -143,19 +177,19 @@ async function start() {
     resumeAudio();
 
     // Mic → analyser (never to the speaker)
-    analyser = ctx.createAnalyser();
+    analyser = audio.createAnalyser();
     analyser.fftSize = FFT_SIZE;
     analyser.smoothingTimeConstant = 0.3;
     spectrum = new Float32Array(analyser.frequencyBinCount);
-    ctx.createMediaStreamSource(stream).connect(analyser);
+    audio.createMediaStreamSource(stream).connect(analyser);
 
     // Our own tone → gain (starts silent) → speaker
-    oscillator = ctx.createOscillator();
+    oscillator = audio.createOscillator();
     oscillator.type = 'sine';
     if (mySlot >= 0) oscillator.frequency.value = frequencyOf(mySlot);
-    gain = ctx.createGain();
+    gain = audio.createGain();
     gain.gain.value = 0;
-    oscillator.connect(gain).connect(ctx.destination);
+    oscillator.connect(gain).connect(audio.destination);
     oscillator.start();
 
     setInterval(tick, TICK_MS);
@@ -163,7 +197,7 @@ async function start() {
     keepScreenOn();
     if (emitting) fadeTo(VOLUME);
   } catch (error) {
-    try { ctx.close(); } catch { /* already closed */ }
+    audio.close().catch(() => {});
     ctx = null;
     throw explainMicError(error);
   }
@@ -184,31 +218,32 @@ export const Sonar = {
   start,
   frequencyOf,
 
-  get ready() { return ready; },
-
-  // Server-provided frequency plan and this player's slot.
-  configure(sonarConfig, slot) {
-    if (sonarConfig) config = { ...config, ...sonarConfig };
-    if (slot === mySlot) return;
-    mySlot = slot;
-    if (oscillator) oscillator.frequency.setValueAtTime(frequencyOf(slot), ctx.currentTime);
+  get ready() {
+    return ready;
   },
 
-  setEmitting(on) {
+  /** Server-provided frequency plan and this player's slot. */
+  configure(sonarConfig: SonarConfig, slot: number) {
+    config = { ...config, ...sonarConfig };
+    if (slot === mySlot) return;
+    mySlot = slot;
+    if (oscillator && ctx) oscillator.frequency.setValueAtTime(frequencyOf(slot), ctx.currentTime);
+  },
+
+  setEmitting(on: boolean) {
     if (on === emitting) return;
     emitting = on;
     fadeTo(on ? VOLUME : 0);
   },
 
-  // Off = ignore the mic and forget all proximity (GPS says nobody is around).
-  setListening(on) {
+  /** Off = ignore the mic and forget all proximity (GPS says nobody is around). */
+  setListening(on: boolean) {
     if (on === listening) return;
     listening = on;
     if (!on) resetTracking();
   },
 
-  // Proximity to one slot: near = within ~2 m (or a short dropout), heldS = seconds of kill charge.
-  near(slot) {
+  near(slot: number): Proximity {
     const near = inRange[slot] || performance.now() - lastInRangeAt[slot] < GRACE_S * 1000;
     return { near, heldS: near ? heldS[slot] : 0, db: averageDb[slot] };
   }

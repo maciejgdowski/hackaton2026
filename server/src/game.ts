@@ -1,52 +1,87 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import type { GameResult, GameView, LocationFix, Phase, Position, Role, SonarGate, Zone } from '@oos/shared';
 import {
   CREW_MAP_INTERVAL_MS, ENDED_RETURN_TO_LOBBY_MS, IMPOSTOR_MAP_INTERVAL_MS, KILL_COOLDOWN_MS,
   KILL_MAX_DISTANCE_M, LOBBY_IDLE_DROP_MS, LOCATION_MAX_AGE_MS, NAME_MAX_LENGTH, PLAYER_GONE_MS,
   ROUND_DURATION_MS, SONAR, SONAR_GATE_HOLD_MS, SONAR_GATE_M, SONAR_GATE_SLACK_M, START_LOCATION_MAX_AGE_MS,
   ZONE_RADIUS_M
-} from './config.js';
-import { GameError } from './errors.js';
-import { distanceMeters } from './geo.js';
+} from './config.ts';
+import { GameError } from './errors.ts';
+import { distanceMeters } from './geo.ts';
 
-export function validateName(name) {
+export function validateName(name: unknown): string {
   const trimmed = typeof name === 'string' ? name.trim() : '';
   if (!trimmed || trimmed.length > NAME_MAX_LENGTH)
     throw new GameError(`Choose a name between 1 and ${NAME_MAX_LENGTH} characters.`);
   return trimmed;
 }
 
-const formatClock = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+const formatClock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+export interface Player {
+  id: string;
+  name: string;
+  slot: number;                  // = this player's sonar frequency
+  role: Role | null;             // set when a round starts
+  alive: boolean;
+  soundReady: boolean;
+  location: (LocationFix & { recordedAt: number }) | null;
+  lastSeen: number;
+  snapshot: Position[] | null;   // the map this player is currently allowed to see
+  nextUpdateAt: number | null;
+  gateUntil: number;
+  diedAt: number | null;
+  killedBy: string | null;
+}
+
+interface GameOptions {
+  code?: string | null;
+  radius?: number;
+  maxPlayers?: number;
+  now?: () => number;
+  pickIndex?: (n: number) => number;
+}
 
 // One lobby and the rounds played in it.
 // phase: 'lobby' (gathering players) → 'playing' → 'ended' → back to 'lobby'.
 export class Game {
-  constructor({ code = null, radius = ZONE_RADIUS_M.default, maxPlayers = SONAR.slots, now = Date.now, pickIndex = randomInt } = {}) {
+  code: string | null;
+  radius: number;
+  maxPlayers: number;
+  now: () => number;
+  pickIndex: (n: number) => number;
+  players = new Map<string, Player>();   // player id → player
+  sessions = new Map<string, string>();  // session token → player id
+  hostId: string | null = null;
+  phase: Phase = 'lobby';
+  zone: Zone | null = null;
+  result: Omit<GameResult, 'killedByName'> | null = null;
+  endsAt: number | null = null;
+  lastKillAt: number | null = null;
+
+  constructor({ code = null, radius = ZONE_RADIUS_M.default, maxPlayers = SONAR.slots, now = Date.now, pickIndex = randomInt }: GameOptions = {}) {
     this.code = code;
     this.radius = radius;
     this.maxPlayers = maxPlayers;
     this.now = now;
     this.pickIndex = pickIndex;   // pickIndex(n) → 0..n-1, chooses the impostor
-    this.players = new Map();     // player id → player
-    this.sessions = new Map();    // session token → player id
-    this.hostId = null;
-    this.clearRound();
   }
 
   // ---------- helpers ----------
 
-  list() {
+  list(): Player[] {
     return [...this.players.values()];
   }
 
-  isPresent(player) {
+  isPresent(player: Player): boolean {
     return this.now() - player.lastSeen < PLAYER_GONE_MS;
   }
 
-  hasSession(player) {
+  hasSession(player: Player): boolean {
     return [...this.sessions.values()].includes(player.id);
   }
 
-  hasFreshLocation(player, maxAge = LOCATION_MAX_AGE_MS) {
+  hasFreshLocation(player: Player, maxAge = LOCATION_MAX_AGE_MS): boolean {
     return !!player.location && this.now() - player.location.recordedAt <= maxAge;
   }
 
@@ -59,25 +94,25 @@ export class Game {
   }
 
   // Removes a player and their sessions; hands the host role on if needed.
-  remove(player) {
+  remove(player: Player) {
     this.players.delete(player.id);
     this.dropSessions(player);
   }
 
-  dropSessions(player) {
+  dropSessions(player: Player) {
     for (const [token, id] of this.sessions) if (id === player.id) this.sessions.delete(token);
     if (this.hostId === player.id) this.hostId = this.pickHost({ presentOnly: false });
   }
 
   // The most recently seen player who still has the app open.
-  pickHost({ presentOnly }) {
+  pickHost({ presentOnly }: { presentOnly: boolean }): string | null {
     const candidates = this.list()
       .filter(p => this.hasSession(p) && (!presentOnly || this.isPresent(p)))
       .sort((a, b) => b.lastSeen - a.lastSeen);
     return candidates[0]?.id ?? null;
   }
 
-  lowestFreeSlot() {
+  lowestFreeSlot(): number {
     const used = new Set(this.list().map(p => p.slot));
     let slot = 0;
     while (used.has(slot)) slot++;
@@ -98,21 +133,21 @@ export class Game {
       return;
     }
 
-    if (this.phase === 'ended' && now - this.result.endedAt >= ENDED_RETURN_TO_LOBBY_MS) this.backToLobby();
+    if (this.phase === 'ended' && this.result && now - this.result.endedAt >= ENDED_RETURN_TO_LOBBY_MS) this.backToLobby();
 
     if (this.phase === 'lobby')
       for (const p of this.list()) if (now - p.lastSeen >= LOBBY_IDLE_DROP_MS) this.remove(p);
 
-    const host = this.players.get(this.hostId);
+    const host = this.hostId ? this.players.get(this.hostId) : undefined;
     if (!host || !this.isPresent(host)) this.hostId = this.pickHost({ presentOnly: true }) ?? this.hostId;
   }
 
   // ---------- joining ----------
 
-  join(rawName) {
+  join(rawName: unknown): string {
     this.maintain();
     if (this.phase === 'playing') {
-      const secondsLeft = Math.max(0, Math.ceil((this.endsAt - this.now()) / 1000));
+      const secondsLeft = Math.max(0, Math.ceil(((this.endsAt ?? 0) - this.now()) / 1000));
       throw new GameError(`A round is in progress (${formatClock(secondsLeft)} left). Try again when it ends.`, 409);
     }
     if (this.phase === 'ended') throw new GameError('A round just ended. The lobby opens again in a moment.', 409);
@@ -121,16 +156,16 @@ export class Game {
     if (this.players.size >= this.maxPlayers) throw new GameError(`The lobby is full (${this.maxPlayers} players max).`, 409);
     if (this.list().some(p => p.name.toLowerCase() === name.toLowerCase())) throw new GameError('That name is already taken.', 409);
 
-    const player = {
+    const player: Player = {
       id: randomUUID(),
       name,
-      slot: this.lowestFreeSlot(),   // = this player's sonar frequency
-      role: null,                    // 'impostor' | 'regular' once a round starts
+      slot: this.lowestFreeSlot(),
+      role: null,
       alive: true,
       soundReady: false,
-      location: null,                // { latitude, longitude, accuracy, recordedAt }
+      location: null,
       lastSeen: this.now(),
-      snapshot: null,                // the map this player is currently allowed to see
+      snapshot: null,
       nextUpdateAt: null,
       gateUntil: 0,
       diedAt: null,
@@ -143,9 +178,10 @@ export class Game {
     return token;
   }
 
-  authenticate(token) {
+  authenticate(token: string): Player {
     this.maintain();
-    const player = this.players.get(this.sessions.get(token));
+    const id = this.sessions.get(token);
+    const player = id ? this.players.get(id) : undefined;
     if (!player) throw new GameError('Join the game to continue.', 401);
     player.lastSeen = this.now();
     return player;
@@ -153,13 +189,14 @@ export class Game {
 
   // ---------- player updates ----------
 
-  setSound(player, ready) {
+  setSound(player: Player, ready: unknown) {
     player.soundReady = ready === true;
   }
 
-  updateLocation(player, body) {
-    const { latitude, longitude, accuracy } = body ?? {};
-    const valid = [latitude, longitude, accuracy].every(Number.isFinite)
+  updateLocation(player: Player, body: unknown) {
+    const { latitude, longitude, accuracy } = (body ?? {}) as Record<string, unknown>;
+    const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    const valid = isNumber(latitude) && isNumber(longitude) && isNumber(accuracy)
       && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 && accuracy >= 0 && accuracy <= 100_000;
     if (!valid) throw new GameError('Invalid coordinates or accuracy.');
     player.location = { latitude, longitude, accuracy, recordedAt: this.now() };
@@ -167,13 +204,14 @@ export class Game {
 
   // ---------- round ----------
 
-  start(player) {
+  start(player: Player) {
     if (player.id !== this.hostId) throw new GameError('Only the host can start the game.', 403);
     if (this.phase !== 'lobby') throw new GameError('The game has already started.', 409);
     if (this.players.size < 2) throw new GameError('At least two players are required.', 409);
     if (!this.hasFreshLocation(player, START_LOCATION_MAX_AGE_MS)) throw new GameError('Get a fresh location before starting.', 409);
 
-    this.zone = { latitude: player.location.latitude, longitude: player.location.longitude, radius: this.radius };
+    const { latitude, longitude } = player.location!;
+    this.zone = { latitude, longitude, radius: this.radius };
     this.phase = 'playing';
     this.endsAt = this.now() + ROUND_DURATION_MS;
     this.lastKillAt = null;
@@ -187,13 +225,13 @@ export class Game {
     });
   }
 
-  kill(killer, targetId) {
+  kill(killer: Player, targetId: unknown) {
     this.checkEnd();
     if (this.phase !== 'playing') throw new GameError('The game is not running.', 409);
     if (killer.role !== 'impostor') throw new GameError('Only the impostor can kill.', 403);
     if (!killer.alive) throw new GameError('You are out of the game.', 403);
 
-    const target = this.players.get(targetId);
+    const target = typeof targetId === 'string' ? this.players.get(targetId) : undefined;
     if (!target || target === killer) throw new GameError('Unknown target.', 404);
     if (!target.alive) throw new GameError('That player is already out.', 409);
 
@@ -202,7 +240,7 @@ export class Game {
     if (cooldownLeft > 0) throw new GameError(`Kill cooling down (${Math.ceil(cooldownLeft / 1000)} s).`, 429);
 
     const bothFresh = this.hasFreshLocation(killer) && this.hasFreshLocation(target);
-    if (bothFresh && distanceMeters(killer.location, target.location) > KILL_MAX_DISTANCE_M)
+    if (bothFresh && distanceMeters(killer.location!, target.location!) > KILL_MAX_DISTANCE_M)
       throw new GameError('Target is too far away.', 409);
 
     target.alive = false;
@@ -220,17 +258,17 @@ export class Game {
     const regularsAlive = regulars.filter(p => p.alive).length;
 
     if (regularsAlive === 0 || (regulars.length > 1 && regularsAlive <= 1)) this.finish('impostor', 'The impostor took out the crew.');
-    else if (this.now() >= this.endsAt) this.finish('regular', 'Time ran out – the crew survived.');
+    else if (this.endsAt !== null && this.now() >= this.endsAt) this.finish('regular', 'Time ran out – the crew survived.');
   }
 
-  finish(winner, reason) {
-    const impostor = this.list().find(p => p.role === 'impostor');
+  finish(winner: Role, reason: string) {
+    const impostor = this.list().find(p => p.role === 'impostor')!;
     this.phase = 'ended';
     this.result = { winner, reason, impostorId: impostor.id, impostorName: impostor.name, endedAt: this.now() };
   }
 
   // Host starts a new round with the same lobby.
-  reset(player) {
+  reset(player: Player) {
     if (player.id !== this.hostId) throw new GameError('Only the host can start a new round.', 403);
     if (this.phase !== 'ended') throw new GameError('The game is still running.', 409);
     this.backToLobby();
@@ -244,13 +282,13 @@ export class Game {
   }
 
   // Leave before the round starts.
-  leave(player) {
+  leave(player: Player) {
     if (this.phase !== 'lobby') throw new GameError('Players cannot leave the roster after the game starts.', 409);
     this.remove(player);
   }
 
   // Quit at any time. Mid-round the player counts as out; if the impostor quits, the crew wins.
-  quit(player) {
+  quit(player: Player) {
     if (this.phase !== 'playing') {
       this.remove(player);
       return;
@@ -265,11 +303,11 @@ export class Game {
   // ---------- what each player may see ----------
 
   // Positions are handed out as snapshots: live for the impostor, every few seconds for the crew.
-  refreshSnapshot(player) {
+  refreshSnapshot(player: Player) {
     const now = this.now();
     player.snapshot = this.list().filter(p => p.alive).map(p => ({
       id: p.id,
-      location: this.hasFreshLocation(p) ? { ...p.location } : null
+      location: p.location && this.hasFreshLocation(p) ? { ...p.location } : null
     }));
     player.nextUpdateAt = now + (player.role === 'impostor' ? IMPOSTOR_MAP_INTERVAL_MS : CREW_MAP_INTERVAL_MS);
   }
@@ -277,18 +315,18 @@ export class Game {
   // Should this phone run its sonar? Only while another living player is close on GPS.
   // Role-blind on purpose: a phone switching on must not reveal who is near.
   // Returns the reasons too, for the ?debug=1 readout.
-  sonarGate(player) {
+  sonarGate(player: Player): SonarGate {
     const now = this.now();
-    const gate = { on: false, why: 'not playing', me: null, nearest: null };
+    const gate: SonarGate = { on: false, why: 'not playing', me: null, nearest: null };
     if (this.phase !== 'playing' || !player.alive) return gate;
 
-    const describe = p => p.location
+    const describe = (p: Player) => p.location
       ? { acc: Math.round(p.location.accuracy), age: Math.round((now - p.location.recordedAt) / 1000) }
       : null;
     gate.me = describe(player);
 
     let close = false;
-    const markClose = why => { if (!close) gate.why = why; close = true; };
+    const markClose = (why: string) => { if (!close) gate.why = why; close = true; };
     if (!this.hasFreshLocation(player)) markClose('my GPS stale');   // fail open
 
     for (const other of this.list()) {
@@ -296,9 +334,9 @@ export class Game {
       if (!this.hasFreshLocation(other)) { markClose('their GPS stale'); continue; }
       if (!this.hasFreshLocation(player)) continue;
 
-      const meters = distanceMeters(player.location, other.location);
-      if (!gate.nearest || meters < gate.nearest.m) gate.nearest = { m: Math.round(meters), ...describe(other) };
-      const slack = Math.min(SONAR_GATE_SLACK_M, (player.location.accuracy + other.location.accuracy) / 2);
+      const meters = distanceMeters(player.location!, other.location!);
+      if (!gate.nearest || meters < gate.nearest.m) gate.nearest = { m: Math.round(meters), ...describe(other)! };
+      const slack = Math.min(SONAR_GATE_SLACK_M, (player.location!.accuracy + other.location!.accuracy) / 2);
       if (meters <= SONAR_GATE_M + slack) markClose('gps close');
     }
 
@@ -311,12 +349,12 @@ export class Game {
   }
 
   // Everything one player's phone needs. Never includes other players' roles.
-  view(player, { debug = false } = {}) {
+  view(player: Player, { debug = false } = {}): GameView {
     this.checkEnd();
-    if (this.phase === 'playing' && this.now() >= player.nextUpdateAt) this.refreshSnapshot(player);
+    if (this.phase === 'playing' && this.now() >= (player.nextUpdateAt ?? 0)) this.refreshSnapshot(player);
 
     const gate = this.sonarGate(player);
-    const killer = player.killedBy && this.players.get(player.killedBy);
+    const killer = player.killedBy ? this.players.get(player.killedBy) : undefined;
     const isImpostor = player.role === 'impostor';
 
     return {

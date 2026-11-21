@@ -1,10 +1,10 @@
-// Entry point: `npm start`.
+// Entry point: `npm start` (Node ≥ 22.18 runs this TypeScript file directly).
 //   PORT       (default 3000)
 //   HOST       (default 0.0.0.0)
 //   BASE_PATH  URL prefix, e.g. /play (default: site root)
 import http from 'node:http';
-import { createApp } from './app.js';
-import { Lobbies } from './lobbies.js';
+import { createApp } from './app.ts';
+import { Lobbies } from './lobbies.ts';
 
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';

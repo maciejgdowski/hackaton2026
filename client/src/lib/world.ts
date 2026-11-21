@@ -3,6 +3,25 @@
 //   lobby → camera flies down to a 1 km × 1 km view around you; only your dot, with a radar pulse
 //   game  → interactive map with the zone circle and player dots
 // Map data: OpenFreeMap "dark" style (free, no key), tweaked to pure monochrome.
+import type { Zone } from '@oos/shared';
+import type { Feature, FeatureCollection, Geometry, Polygon } from 'geojson';
+import type { GeoJSONSource, Map as MapLibreMap, StyleSpecification } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+export type WorldMode = 'menu' | 'lobby' | 'game';
+export interface Dot {
+  lat: number;
+  lon: number;
+  self?: boolean;
+}
+type MapLibreModule = typeof import('maplibre-gl');
+
+interface Padding {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
 const SPIN_DEG_PER_S = 3;
@@ -10,28 +29,29 @@ const LOBBY_VIEW_M = 1000;
 const PULSE_MS = 2600;
 const METERS_PER_PIXEL_AT_ZOOM_0 = 78_271.517; // 512 px tiles, at the equator
 
-const EMPTY = { type: 'FeatureCollection', features: [] };
+const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
-let map = null;
+let map: MapLibreMap | null = null;
 let loaded = false;
-let mode = 'menu';
+let mode: WorldMode = 'menu';
 let spinning = true;
 let homed = false;      // camera has flown down to the player
-let me = null;          // { lat, lon }
+let me: { lat: number; lon: number } | null = null;
 let zoneKey = '';
-let zoneFeature = null;
+let zoneFeature: Feature<Polygon> | null = null;
 let lastLobbyPadding = '';
 let lastFrame = 0;
 
-const pending = [];     // calls made before the style finished loading
-const whenLoaded = fn => (loaded ? fn() : pending.push(fn));
+const pending: Array<(map: MapLibreMap) => void> = []; // calls made before the style finished loading
+const whenLoaded = (fn: (map: MapLibreMap) => void) => (loaded && map ? fn(map) : pending.push(fn));
+const source = (m: MapLibreMap, id: string) => m.getSource(id) as GeoJSONSource;
 
 // ---------- geometry ----------
 
-function circlePolygon(lat, lon, radiusM, points = 72) {
+function circlePolygon(lat: number, lon: number, radiusM: number, points = 72): Feature<Polygon> {
   const dLat = radiusM / 111_320;
   const dLon = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
-  const ring = [];
+  const ring: number[][] = [];
   for (let i = 0; i <= points; i++) {
     const a = (i / points) * 2 * Math.PI;
     ring.push([lon + dLon * Math.cos(a), lat + dLat * Math.sin(a)]);
@@ -39,11 +59,11 @@ function circlePolygon(lat, lon, radiusM, points = 72) {
   return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] }, properties: {} };
 }
 
-const point = (lon, lat, properties = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties });
+const point = (lon: number, lat: number, properties = {}): Feature<Geometry> => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties });
 
 // ---------- style ----------
 
-function monochrome(style) {
+function monochrome(style: StyleSpecification): StyleSpecification {
   style.projection = { type: 'globe' };
   // Faint white rim around the globe that fades out as we zoom in.
   style.sky = {
@@ -51,9 +71,10 @@ function monochrome(style) {
     'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 0.9, 5, 0.6, 8, 0]
   };
   for (const layer of style.layers) {
-    if (layer.id === 'background') layer.paint['background-color'] = '#141414'; // land
-    if (layer.id === 'water') layer.paint['fill-color'] = '#030303';
-    if (layer.id === 'waterway') layer.paint['line-color'] = '#030303';
+    const paint = (layer as { paint?: Record<string, unknown> }).paint;
+    if (paint && layer.id === 'background') paint['background-color'] = '#141414'; // land
+    if (paint && layer.id === 'water') paint['fill-color'] = '#030303';
+    if (paint && layer.id === 'waterway') paint['line-color'] = '#030303';
     if (/^place_(country|state)/.test(layer.id)) layer.minzoom = 4;           // clean globe: no country names
   }
   return style;
@@ -65,12 +86,12 @@ const isWide = () => window.innerWidth >= 900;
 const spaceZoom = () => (isWide() ? 1.75 : 1.15);
 
 // Menu: globe above the title on phones, to the right of the panel on wide screens.
-const menuPadding = () => (isWide()
+const menuPadding = (): Padding => (isWide()
   ? { top: 0, bottom: 0, right: 0, left: Math.round(window.innerWidth * 0.42) }
   : { top: 0, left: 0, right: 0, bottom: Math.round(window.innerHeight * 0.38) });
 
 // Lobby: keep the 1 km view clear of the panel (bottom sheet on phones, left panel on desktop).
-function lobbyPadding() {
+function lobbyPadding(): Padding {
   if (isWide()) return { top: 40, bottom: 40, right: 40, left: Math.round(Math.max(48, window.innerWidth * 0.06) + 520) };
   const sheet = document.getElementById('lobby');
   const sheetHeight = sheet && !sheet.hidden ? sheet.offsetHeight : Math.round(window.innerHeight * 0.55);
@@ -78,7 +99,7 @@ function lobbyPadding() {
 }
 
 // Camera that fits LOBBY_VIEW_M metres into the free part of the screen.
-function lobbyCamera(lat, lon) {
+function lobbyCamera(lat: number, lon: number) {
   const padding = lobbyPadding();
   lastLobbyPadding = JSON.stringify(padding);
   const freePx = Math.max(120, Math.min(
@@ -86,26 +107,26 @@ function lobbyCamera(lat, lon) {
     window.innerHeight - padding.top - padding.bottom));
   const metersPerPixel = LOBBY_VIEW_M / freePx;
   const zoom = Math.log2((METERS_PER_PIXEL_AT_ZOOM_0 * Math.cos((lat * Math.PI) / 180)) / metersPerPixel);
-  return { center: [lon, lat], zoom, bearing: 0, padding };
+  return { center: [lon, lat] as [number, number], zoom, bearing: 0, padding };
 }
 
 // The lobby sheet grows as players join → keep the view centred in the free area.
 function refitLobby() {
-  if (!loaded || mode !== 'lobby' || !homed || !me || map.isMoving()) return;
+  if (!loaded || !map || mode !== 'lobby' || !homed || !me || map.isMoving()) return;
   if (JSON.stringify(lobbyPadding()) !== lastLobbyPadding) map.easeTo({ ...lobbyCamera(me.lat, me.lon), duration: 700 });
 }
 
-function setInteractive(on) {
-  for (const handler of ['dragPan', 'scrollZoom', 'touchZoomRotate', 'doubleClickZoom', 'keyboard', 'boxZoom'])
-    on ? map[handler].enable() : map[handler].disable();
-  map.dragRotate.disable();
-  map.touchPitch.disable();
-  if (on) map.touchZoomRotate.disableRotation();
+function setInteractive(m: MapLibreMap, on: boolean) {
+  for (const handler of [m.dragPan, m.scrollZoom, m.touchZoomRotate, m.doubleClickZoom, m.keyboard, m.boxZoom])
+    on ? handler.enable() : handler.disable();
+  m.dragRotate.disable();
+  m.touchPitch.disable();
+  if (on) m.touchZoomRotate.disableRotation();
 }
 
 // ---------- animation ----------
 
-function spin(t) {
+function spin(t: number) {
   if (map && spinning && !map.isMoving()) {
     const dt = lastFrame ? Math.min(0.1, (t - lastFrame) / 1000) : 0;
     const center = map.getCenter();
@@ -116,37 +137,36 @@ function spin(t) {
 }
 
 // Radar pulse around your dot: two rings half a cycle apart, each fading out before it restarts.
-function pulse(t) {
-  if (loaded && mode === 'lobby' && me) {
+function pulse(t: number) {
+  if (loaded && map && mode === 'lobby' && me) {
     ['me-pulse', 'me-pulse2'].forEach((id, i) => {
       const k = ((t + (i * PULSE_MS) / 2) % PULSE_MS) / PULSE_MS;
-      map.setPaintProperty(id, 'circle-radius', 8 + 46 * k);
-      map.setPaintProperty(id, 'circle-stroke-opacity', 0.7 * Math.min(1, k / 0.15) * (1 - k) ** 1.5);
+      map!.setPaintProperty(id, 'circle-radius', 8 + 46 * k);
+      map!.setPaintProperty(id, 'circle-stroke-opacity', 0.7 * Math.min(1, k / 0.15) * (1 - k) ** 1.5);
     });
   }
   requestAnimationFrame(pulse);
 }
 
-function drawMe() {
-  if (!loaded) return;
+function drawMe(m: MapLibreMap) {
   const visible = me && mode === 'lobby';
-  map.getSource('me').setData(visible ? { type: 'FeatureCollection', features: [point(me.lon, me.lat)] } : EMPTY);
+  source(m, 'me').setData(visible && me ? { type: 'FeatureCollection', features: [point(me.lon, me.lat)] } : EMPTY);
 }
 
-function clearGameLayers() {
-  map.getSource('zone').setData(EMPTY);
-  map.getSource('dots').setData(EMPTY);
+function clearGameLayers(m: MapLibreMap) {
+  source(m, 'zone').setData(EMPTY);
+  source(m, 'dots').setData(EMPTY);
 }
 
-function fitZone() {
+function fitZone(m: MapLibreMap) {
   const ring = zoneFeature?.geometry.coordinates[0];
   if (!ring) return;
-  const lons = ring.map(p => p[0]);
-  const lats = ring.map(p => p[1]);
-  map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40, duration: 1500 });
+  const lons = ring.map((p: number[]) => p[0]);
+  const lats = ring.map((p: number[]) => p[1]);
+  m.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 40, duration: 1500 });
 }
 
-function addLayers() {
+function addLayers(map: MapLibreMap) {
   map.addSource('zone', { type: 'geojson', data: EMPTY });
   map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zone', paint: { 'fill-color': '#ffffff', 'fill-opacity': 0.04 } });
   map.addLayer({ id: 'zone-line', type: 'line', source: 'zone',
@@ -173,45 +193,53 @@ function addLayers() {
 
 // ---------- public API ----------
 
-async function init(containerId) {
-  if (!window.maplibregl) return;
-  let style;
+async function init(container: HTMLElement) {
+  if (map) return;
+  let style: StyleSpecification;
+  let maplibregl: MapLibreModule;
   try {
-    style = monochrome(await (await fetch(STYLE_URL)).json());
+    // Loaded on demand (its own file): the screens show up before the ~800 kB map library arrives.
+    [maplibregl, style] = await Promise.all([
+      import('maplibre-gl').then(module => (module as MapLibreModule & { default?: MapLibreModule }).default ?? module),
+      fetch(STYLE_URL).then(response => response.json()).then(monochrome)
+    ]);
   } catch {
     return; // no map: the screens still work on black
   }
+  if (map) return;
 
-  map = new maplibregl.Map({
-    container: containerId, style, center: [19, 35], zoom: spaceZoom(), padding: menuPadding(),
+  const m = new maplibregl.Map({
+    container, style, center: [19, 35], zoom: spaceZoom(),
     attributionControl: { compact: true }, maxPitch: 0, renderWorldCopies: false, fadeDuration: 300
   });
-  setInteractive(false);
+  map = m;
+  m.setPadding(menuPadding());
+  setInteractive(m, false);
 
-  map.on('load', () => {
-    if (mode !== 'game' && !homed) map.setPadding(menuPadding());
-    addLayers();
+  m.on('load', () => {
+    if (mode !== 'game' && !homed) m.setPadding(menuPadding());
+    addLayers(m);
     loaded = true;
-    pending.splice(0).forEach(fn => fn());
+    pending.splice(0).forEach(fn => fn(m));
     requestAnimationFrame(pulse);
     document.documentElement.classList.add('world-ready');
   });
   requestAnimationFrame(spin);
 
-  window.addEventListener('resize', () => { if (loaded && spinning) map.setPadding(menuPadding()); });
+  window.addEventListener('resize', () => { if (loaded && spinning) m.setPadding(menuPadding()); });
   const sheet = document.getElementById('lobby');
   if (sheet && window.ResizeObserver) new ResizeObserver(refitLobby).observe(sheet);
-  map.on('moveend', refitLobby);
+  m.on('moveend', refitLobby);
 }
 
 export const World = {
   init,
 
   // Fly down to a 1 km view around a position (only the first time, unless forced).
-  home(lat, lon, { force = false } = {}) {
+  home(lat: number, lon: number, { force = false } = {}) {
     me = { lat, lon };
-    whenLoaded(() => {
-      drawMe();
+    whenLoaded(map => {
+      drawMe(map);
       if (homed && !force) return;
       homed = true;
       spinning = false;
@@ -220,7 +248,7 @@ export const World = {
   },
 
   // Your latest position (the lobby shows only you).
-  me(lat, lon) {
+  me(lat: number, lon: number) {
     me = { lat, lon };
     whenLoaded(drawMe);
   },
@@ -231,40 +259,43 @@ export const World = {
     zoneKey = '';
     zoneFeature = null;
     me = null;
-    whenLoaded(() => {
-      clearGameLayers();
-      setInteractive(false);
+    whenLoaded(map => {
+      clearGameLayers(map);
+      setInteractive(map, false);
       map.flyTo({ center: [map.getCenter().lng, 35], zoom: spaceZoom(), duration: 3000, essential: true, padding: menuPadding() });
       map.once('moveend', () => { spinning = true; });
     });
   },
 
-  setMode(next) {
+  setMode(next: WorldMode) {
     if (next === mode) return;
     mode = next;
-    whenLoaded(() => setInteractive(next === 'game'));
+    whenLoaded(map => setInteractive(map, next === 'game'));
     if (next !== 'game') {
       zoneKey = '';
       whenLoaded(clearGameLayers);
     }
-    if (next === 'lobby' && homed && me) whenLoaded(() => map.flyTo({ ...lobbyCamera(me.lat, me.lon), duration: 2000, essential: true }));
-    if (next === 'game') whenLoaded(() => map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }));
+    if (next === 'lobby' && homed && me) {
+      const { lat, lon } = me;
+      whenLoaded(map => map.flyTo({ ...lobbyCamera(lat, lon), duration: 2000, essential: true }));
+    }
+    if (next === 'game') whenLoaded(map => map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }));
     whenLoaded(drawMe);
   },
 
   // In game: draw the zone (fit to it the first time) and the player dots.
-  show(zone, dots) {
-    whenLoaded(() => {
+  show(zone: Zone, dots: Dot[]) {
+    whenLoaded(map => {
       const key = `${zone.latitude},${zone.longitude},${zone.radius}`;
       if (key !== zoneKey) {
         zoneKey = key;
         spinning = false;
         homed = true;
         zoneFeature = circlePolygon(zone.latitude, zone.longitude, zone.radius);
-        map.getSource('zone').setData(zoneFeature);
-        fitZone();
+        source(map, 'zone').setData(zoneFeature);
+        fitZone(map);
       }
-      map.getSource('dots').setData({ type: 'FeatureCollection', features: dots.map(d => point(d.lon, d.lat, { self: !!d.self })) });
+      source(map, 'dots').setData({ type: 'FeatureCollection', features: dots.map(d => point(d.lon, d.lat, { self: !!d.self })) });
     });
   },
 

@@ -1,13 +1,21 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import { fileURLToPath } from 'node:url';
-import { GameError } from './errors.js';
+import { GameError } from './errors.ts';
+import type { Game, Player } from './game.ts';
+import type { Lobbies } from './lobbies.ts';
 
-const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
+// The built React app (npm run build → client/dist).
+const CLIENT_DIR = fileURLToPath(new URL('../../client/dist/', import.meta.url));
+
+interface Session {
+  game: Game;
+  player: Player;
+}
 
 // Rejects cross-origin calls and anything that isn't a JSON object.
-function guardRequests(req, res, next) {
+function guardRequests(req: Request, _res: Response, next: NextFunction) {
   if (req.headers.origin) {
-    let origin;
+    let origin: URL;
     try { origin = new URL(req.headers.origin); } catch { throw new GameError('Invalid origin.', 403); }
     if (origin.host !== req.headers.host) throw new GameError('Cross-origin requests are not allowed.', 403);
   }
@@ -15,14 +23,14 @@ function guardRequests(req, res, next) {
   next();
 }
 
-function requireJsonObject(req, res, next) {
-  const body = req.body;
+function requireJsonObject(req: Request, _res: Response, next: NextFunction) {
+  const body: unknown = req.body;
   if (req.method === 'POST' && (!body || typeof body !== 'object' || Array.isArray(body)))
     throw new GameError('Expected a JSON object.');
   next();
 }
 
-function handleErrors(error, req, res, next) {
+function handleErrors(error: Error & { type?: string }, _req: Request, res: Response, next: NextFunction) {
   if (res.headersSent) return next(error);
   if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });
   if (error.type === 'entity.too.large') return res.status(413).json({ error: 'Request too large.' });
@@ -31,7 +39,7 @@ function handleErrors(error, req, res, next) {
   res.status(500).json({ error: 'Server error.' });
 }
 
-function createApi(lobbies) {
+function createApi(lobbies: Lobbies) {
   const api = express.Router();
   api.use(guardRequests, express.json({ limit: '4kb' }), requireJsonObject);
 
@@ -46,19 +54,20 @@ function createApi(lobbies) {
   // Everything below needs a session: "Authorization: Bearer <token>".
   api.use((req, res, next) => {
     const token = req.headers.authorization?.replace(/^Bearer /, '');
-    Object.assign(res.locals, lobbies.authenticate(token)); // → res.locals.game, res.locals.player
+    res.locals.session = lobbies.authenticate(token);
     next();
   });
 
-  // Small helper: run an action on the player's game, then reply.
-  const route = (action, reply = 'view') => (req, res) => {
-    const { game, player } = res.locals;
+  // Runs an action on the player's game, then replies with their view (or { ok: true }).
+  type Action = (game: Game, player: Player, body: Record<string, unknown>) => void;
+  const route = (action: Action, reply: 'view' | 'ok' = 'view') => (req: Request, res: Response) => {
+    const { game, player } = res.locals.session as Session;
     action(game, player, req.body);
     res.json(reply === 'view' ? game.view(player) : { ok: true });
   };
 
   api.get('/state', (req, res) => {
-    const { game, player } = res.locals;
+    const { game, player } = res.locals.session as Session;
     res.json(game.view(player, { debug: req.headers['x-debug'] === '1' }));
   });
   api.post('/sound', route((game, player, body) => game.setSound(player, body.ready), 'ok'));
@@ -72,13 +81,13 @@ function createApi(lobbies) {
 }
 
 // basePath: URL prefix the game lives under ('' = site root, '/play' = example.com/play/).
-export function createApp(lobbies, { basePath = '' } = {}) {
+export function createApp(lobbies: Lobbies, { basePath = '' } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.disable('etag');
-  app.enable('strict routing');
+  app.set('strict routing', true);
 
-  app.use((req, res, next) => {
+  app.use((_req, res, next) => {
     res.set({
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
@@ -89,13 +98,13 @@ export function createApp(lobbies, { basePath = '' } = {}) {
   });
 
   if (basePath) {
-    app.get('/', (req, res) => res.redirect(308, `${basePath}/`));
-    app.get(basePath, (req, res) => res.redirect(308, `${basePath}/`));
+    app.get('/', (_req, res) => res.redirect(308, `${basePath}/`));
+    app.get(basePath, (_req, res) => res.redirect(308, `${basePath}/`));
   }
 
   app.use(`${basePath}/api`, createApi(lobbies));
-  app.use(basePath || '/', express.static(PUBLIC_DIR, { dotfiles: 'deny', etag: false, lastModified: false, cacheControl: false }));
-  app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
+  app.use(basePath || '/', express.static(CLIENT_DIR, { dotfiles: 'deny', etag: false, lastModified: false, cacheControl: false }));
+  app.use((_req, res) => res.status(404).json({ error: 'Not found.' }));
   app.use(handleErrors);
   return app;
 }

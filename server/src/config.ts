@@ -1,3 +1,5 @@
+import type { SonarConfig } from '@oos/shared';
+
 // Every gameplay number in one place.
 
 // Round
@@ -20,7 +22,7 @@ export const SONAR_GATE_SLACK_M = 10;     // + up to this much for reported GPS 
 export const SONAR_GATE_HOLD_MS = 10_000; // stay on this long after the last "close"
 
 // Sonar frequencies: every player gets one slot = one tone (17.8–19.9 kHz).
-export const SONAR = { base: 17_800, spacing: 300, slots: 8 };
+export const SONAR: SonarConfig = { base: 17_800, spacing: 300, slots: 8 };
 
 // Lobbies
 export const LOBBY_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I / O: easy to read out loud

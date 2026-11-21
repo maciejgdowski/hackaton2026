@@ -10,50 +10,70 @@ Live: **https://outofsignal.pl/** · Hackathon 2026
 
 ---
 
+## Stack
+
+- **Client**: React 19 + TypeScript, built with Vite. MapLibre GL for the map, Web Audio for the sonar.
+- **Server**: Node.js + Express 5 + TypeScript. Node ≥ 22.18 runs the `.ts` files directly (type
+  stripping), so the server has no build step. All state is in memory.
+- **Shared**: API types used by both sides (`shared/types.ts`).
+- npm workspaces: one `npm install` at the root installs everything.
+
 ## Project structure
 
 ```
 .
-├── package.json              npm start / npm run dev (only dependency: express)
+├── package.json                 workspaces + scripts: dev, build, start, typecheck
 │
-├── server/                   Node.js backend (Express 5, all state in memory)
-│   ├── index.js              entry point: reads PORT / HOST / BASE_PATH, starts the HTTP server
-│   ├── app.js                Express app: security headers, JSON API routes, static files
-│   ├── lobbies.js            all running games, each behind a 4-letter lobby code
-│   ├── game.js               one lobby + its rounds: players, roles, kills, win check, sonar gate
-│   ├── config.js             every gameplay number (timers, distances, frequencies, limits)
-│   ├── geo.js                distance between two GPS points
-│   └── errors.js             GameError (message shown to the player + HTTP status)
+├── shared/
+│   └── types.ts                 API types (GameView, PlayerSummary, …) shared by client and server
 │
-├── public/                   browser app: plain ES modules, no build step
-│   ├── index.html            all screens: join, lobby, game, end, overlays
-│   ├── manifest.webmanifest  "Add to Home Screen" as a full-screen web app
-│   ├── favicon.ico
-│   ├── icons/                home-screen icons
-│   ├── css/style.css         black & white UI (phone bottom sheet / desktop side panel)
-│   └── js/
-│       ├── main.js           entry point: polls the server, shows the right screen
-│       ├── api.js            fetch wrapper + session token
-│       ├── location.js       GPS: one-off fixes, tracking, uploads
-│       ├── sonar.js          Web Audio: plays your tone, listens for everyone else's
-│       ├── world.js          MapLibre map behind every screen (globe → your street → game zone)
-│       ├── store.js          shared client state (latest server state, clock offset)
-│       ├── dom.js            small DOM helpers ($, error toast, list rows)
-│       └── screens/
-│           ├── join.js       name + Create lobby (radius, players) / Join (code)
-│           ├── lobby.js      code + share, player list, sound/location status, start
-│           ├── game.js       map, HUD, impostor kill bar, ?debug=1 readout
-│           └── end.js        winner + roles revealed, new round
+├── server/                      Express API + serves the built client
+│   └── src/
+│       ├── index.ts             entry point: reads PORT / HOST / BASE_PATH, starts the HTTP server
+│       ├── app.ts               Express app: security headers, JSON API routes, static files
+│       ├── lobbies.ts           all running games, each behind a 4-letter lobby code
+│       ├── game.ts              one lobby + its rounds: players, roles, kills, win check, sonar gate
+│       ├── config.ts            every gameplay number (timers, distances, frequencies, limits)
+│       ├── geo.ts               distance between two GPS points
+│       └── errors.ts            GameError (message shown to the player + HTTP status)
+│
+├── client/                      React app (Vite)
+│   ├── index.html
+│   ├── vite.config.ts           dev server proxies /api → :3000
+│   ├── public/                  manifest, favicon, home-screen icons (copied as-is)
+│   └── src/
+│       ├── main.tsx             React entry
+│       ├── App.tsx              picks the screen from the game phase; map, overlays, toast around it
+│       ├── styles.css           black & white UI (phone bottom sheet / desktop side panel)
+│       ├── hooks/
+│       │   ├── useGame.ts       polls /api/state every second, keeps the sonar in sync, all game actions
+│       │   └── useTicker.ts     re-render every N ms (countdowns, live sonar)
+│       ├── screens/
+│       │   ├── JoinScreen.tsx   name + Create lobby (radius, players) / Join (code)
+│       │   ├── LobbyScreen.tsx  code + share, player list, sound/location status, start
+│       │   ├── GameScreen.tsx   map, HUD, impostor kill bar, ?debug=1 readout
+│       │   └── EndScreen.tsx    winner + roles revealed, new round
+│       ├── components/
+│       │   ├── WorldMap.tsx     the map behind every screen
+│       │   ├── Overlays.tsx     SIGNAL LOST, tap-to-reconnect
+│       │   ├── ErrorToast.tsx, PlayerRow.tsx, Choice.tsx
+│       └── lib/                 plain TypeScript, no React
+│           ├── api.ts           fetch wrapper + session token
+│           ├── sonar.ts         Web Audio: plays your tone, listens for everyone else's
+│           ├── world.ts         MapLibre: globe → your street → game zone (lazy-loaded)
+│           ├── location.ts      GPS: one-off fixes, tracking, uploads (+ useLocation hook)
+│           ├── toast.ts         error toast store (showError from anywhere)
+│           └── time.ts          server clock, countdown formatting
 │
 └── tools/
-    └── sonar-lab/index.html  standalone sonar calibration + recording page (outofsignal.pl/sonar)
+    └── sonar-lab/index.html     standalone sonar calibration + recording page (outofsignal.pl/sonar)
 ```
 
 ### Branches
 
 | Branch | What's on it |
 |---|---|
-| `feature/sonar-gps` | **The game** (this layout). Runs on outofsignal.pl |
+| `feature/sonar-gps` | **The game** (React + TS). Runs on outofsignal.pl |
 | `master` | The team's first scaffold: React + Socket.IO prototype (not used by the game) |
 | `sonar` | The original sonar test page only |
 | `gps` | Snapshot of the original standalone GPS game (outofsignal.pl/gps) |
@@ -98,7 +118,7 @@ Live: **https://outofsignal.pl/** · Hackathon 2026
           3.5 s in range (gaps < 1.5 s pause the charge, longer gaps reset it) → kill allowed
 ```
 
-- **Sonar gate** (`server/game.js` → `sonarGate`): the sonar only runs while GPS says someone is close. It
+- **Sonar gate** (`server/src/game.ts` → `sonarGate`): the sonar only runs while GPS says someone is close. It
   stays on 10 s after that, and it is **fail-open**: without fresh GPS the sonar runs anyway. It ignores
   roles on purpose, so a phone switching its sonar on doesn't give the impostor away.
 - **Kill check on the server**: GPS can't measure 2 m, so the server only rejects kills where both phones
@@ -112,7 +132,7 @@ Live: **https://outofsignal.pl/** · Hackathon 2026
 - **Debug**: `outofsignal.pl/?debug=1` shows the gate state, the nearest player on GPS and live dB per
   player. `?db=NN` overrides the kill threshold on that phone.
 
-All numbers live in `server/config.js` (server) and at the top of `public/js/sonar.js` (thresholds).
+All numbers live in `server/src/config.ts` (server) and at the top of `client/src/lib/sonar.ts` (thresholds).
 
 ## HTTP API
 
@@ -137,16 +157,19 @@ reveals nothing extra.
 
 ## Run locally
 
-Requires Node ≥ 22.
+Requires Node ≥ 22.18.
 
 ```bash
 npm install
-npm run dev                  # http://localhost:3000/   (restarts on file changes)
-BASE_PATH=/play npm start    # serve under http://localhost:3000/play/
+npm run dev          # API on :3000 + Vite on :5173 (hot reload) → open http://localhost:5173
+npm run typecheck    # tsc for server and client
+npm run build        # client → client/dist
+npm start            # production: server on :3000 serves the API + client/dist
 ```
 
-Location and microphone need a secure context. `localhost` counts as secure, but to test from a phone
-you need HTTPS, e.g. a tunnel or the deployed site.
+`BASE_PATH=/play npm start` serves everything under `/play/`. Location and the microphone need a secure
+context. `localhost` counts as secure, but to test from a phone you need HTTPS, e.g. a tunnel or the
+deployed site.
 
 ## Deployment
 
@@ -154,21 +177,22 @@ The VPS runs **Caddy** (automatic HTTPS) in front of `outofsignal.pl`:
 
 | URL | Served by |
 |---|---|
-| `/` | The game: `/opt/outofsignal-app`, systemd `outofsignal-app` (`node server/index.js`, port 3004) |
+| `/` | The game: `/opt/outofsignal-app`, systemd `outofsignal-app` (`node server/src/index.ts`, port 3004) |
 | `/app`, `/app/*` | 308 redirect to `/` (old links) |
 | `/sonar`, `/sonar/*` | `tools/sonar-lab/index.html` as a static file |
 | `/gps/*` | The original standalone GPS game (port 3003) |
 
-Redeploy the game:
+Redeploy the game (build locally, ship the build + server):
 
 ```bash
-tar --exclude node_modules --exclude .git --exclude tools -czf app.tgz .
+npm run build
+tar --exclude node_modules -czf app.tgz package.json package-lock.json shared server client/package.json client/dist
 scp app.tgz <server>:/tmp/
-ssh <server> 'cd /opt/outofsignal-app && sudo tar xzf /tmp/app.tgz && sudo npm ci --omit=dev \
+ssh <server> 'cd /opt/outofsignal-app && sudo tar xzf /tmp/app.tgz && sudo npm ci --omit=dev -w @oos/server \
   && sudo chmod -R u=rwX,go=rX . && sudo systemctl restart outofsignal-app'
 ```
 
-- If only `public/` changed, skip `npm ci` and the restart. A restart wipes all lobbies, because games live
+- If only the client changed, shipping `client/dist` is enough (no restart). A restart wipes all lobbies, because games live
   only in memory.
 - Caddy: back up `/etc/caddy/Caddyfile`, run `caddy validate --config /etc/caddy/Caddyfile`, then
   `systemctl reload caddy`. Use exact matchers (`path /sonar /sonar/*`), not prefixes like `/sonar*`. A
