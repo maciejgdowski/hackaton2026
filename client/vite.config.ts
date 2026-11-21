@@ -9,5 +9,9 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:3000' } // npm run dev: the API runs on :3000
   },
   // maplibre-gl (~1 MB) is loaded lazily in its own chunk
-  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1100 }
+  // two pages: the game (/) and the standalone sonar test (/sonar/)
+  build: {
+    outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1100,
+    rollupOptions: { input: { main: 'index.html', sonar: 'sonar/index.html' } }
+  }
 });
