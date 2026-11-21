@@ -14,6 +14,7 @@ interface LobbyState {
     clues: "easy" | "medium" | "hard";
   };
   members: Record<string, string>;
+  phase: "lobby" | "playing" | "ended";
 }
 
 interface LobbyTileProps {
@@ -113,9 +114,13 @@ export default function Lobby() {
 
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as { type?: string; lobby?: LobbyState };
+        const message = JSON.parse(event.data) as { type?: string; lobby?: LobbyState; gameId?: string };
         if (message.type === "lobby:update" && message.lobby) {
           setLobbyData(message.lobby);
+          // came back to a lobby whose game is already running
+          if (message.lobby.phase === "playing") navigate(`/game/${lobbyId}`);
+        } else if (message.type === "game:start" && message.gameId) {
+          navigate(`/game/${message.gameId}`);
         } else if (message.type === "lobby:closed") {
           navigate("/");
         }
@@ -140,6 +145,23 @@ export default function Lobby() {
       navigate("/");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not leave lobby.");
+    }
+  }
+
+  async function startGame() {
+    if (!lobbyId || !userId) return;
+    try {
+      const response = await fetch(
+        `${API_URL}/lobby/${encodeURIComponent(lobbyId)}/start?userId=${encodeURIComponent(userId)}`,
+        { method: "POST" }
+      );
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? `Could not start the game (${response.status}).`);
+      }
+      // everyone (us too) moves to the game page when the "game:start" message arrives
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Could not start the game.");
     }
   }
 
@@ -188,7 +210,7 @@ export default function Lobby() {
           </div>
           {!isLoading && !error && (isAdmin ? (
             <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
-              <button onClick={() => navigate(`/game/${lobbyId}`)}>Start game</button>
+              <button onClick={startGame}>Start game</button>
               <button onClick={disbandLobby}>Disband / Abandon lobby</button>
             </div>
           ) : (
