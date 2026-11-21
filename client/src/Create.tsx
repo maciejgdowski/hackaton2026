@@ -84,7 +84,8 @@ export default function Create() {
             players: Number(playerCount),
             hunters: Number(hunterCount),
             clues: clueMap[clueDensity],
-            username: lobbyName,
+            name: lobbyName,
+            username: localStorage.getItem("username") ?? "Player",
           }),
         }
       );
@@ -218,7 +219,7 @@ export default function Create() {
           <button
             className="create-button"
             style={{ width: "30vw" }}
-            onClick={() => navigate("/")}
+            onClick={() => navigate("/lobbies")}
           >
             Back
           </button>

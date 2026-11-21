@@ -6,7 +6,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import http, { IncomingMessage } from 'http';
 import { Duplex } from "stream";
 import {
-  checkEnd, createGame, GameError, kill, removePlayer, serializeGame, updateLocation,
+  checkEnd, createGame, GameError, removePlayer, scan, serializeGame, updateLocation,
   type GameState, type Phase,
 } from "./game.ts";
 
@@ -121,7 +121,7 @@ app.post("/lobby/create", (req: Request, res: Response) => {
     return;
   }
 
-  const { radius, center, players, hunters, clues, username } = req.body;
+  const { name, radius, center, players, hunters, clues, username } = req.body;
   const validRadii = ["small", "medium", "large"];
   const validClues = ["easy", "medium", "hard"];
 
@@ -143,11 +143,12 @@ app.post("/lobby/create", (req: Request, res: Response) => {
   }
 
   const lobbyId = crypto.randomUUID();
-  const lobbyName = typeof username === "string" && username.trim() ? username.trim() : "Lobby";
+  const playerName = typeof username === "string" && username.trim() ? username.trim().slice(0, 24) : "Player";
+  const lobbyName = typeof name === "string" && name.trim() ? name.trim() : `${playerName}'s lobby`;
   const lobbyState: LobbyState = {
     name: lobbyName,
     props: { radius, center, players, hunters, clues },
-    members: new Map([[userId, lobbyName]]),
+    members: new Map([[userId, playerName]]),
     phase: "lobby",
     game: null,
   };
@@ -308,7 +309,7 @@ app.post("/lobby/:lobbyId/join", (req: Request, res: Response) => {
 
   if (!lobby.members.has(userId)) {
     const username = typeof req.body.username === "string" && req.body.username.trim()
-      ? req.body.username.trim()
+      ? req.body.username.trim().slice(0, 24)
       : "Player";
     lobby.members.set(userId, username);
     broadcastLobbyUpdate(lobbyId);
@@ -448,8 +449,9 @@ app.post("/game/:gameId/location", (req: Request, res: Response) => {
   res.status(204).end();
 });
 
-// Body: { targetId }. The hunter's phone only offers this once the sonar says the target is within ~2 m.
-app.post("/game/:gameId/kill", (req: Request, res: Response) => {
+// Body: { targetId }. Same button for everyone: a hunter catches a runner, two runners exchange data.
+// The phone only allows this once the sonar says the target is within ~2 m.
+app.post("/game/:gameId/scan", (req: Request, res: Response) => {
   const gameId = req.params.gameId as string;
   const lobby = lobbies.get(gameId);
   const userId = authenticateUser(req);
@@ -458,8 +460,9 @@ app.post("/game/:gameId/kill", (req: Request, res: Response) => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
+  let outcome;
   try {
-    kill(lobby.game, userId ?? "", req.body?.targetId);
+    outcome = scan(lobby.game, userId ?? "", req.body?.targetId);
   } catch (error) {
     sendError(res, error);
     return;
@@ -467,7 +470,7 @@ app.post("/game/:gameId/kill", (req: Request, res: Response) => {
   if (lobby.game.result) lobby.phase = "ended";
   broadcastLobbyUpdate(gameId);
   broadcastGameUpdate(gameId);
-  res.status(204).end();
+  res.json(outcome);
 });
 
 // Once a second: end rounds whose timer ran out and push fresh views

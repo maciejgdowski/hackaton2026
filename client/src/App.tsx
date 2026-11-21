@@ -12,13 +12,18 @@ interface LobbySummary {
 }
 
 function App() {
-  const userName = "daw123";
+  const userName = localStorage.getItem("username");
   const navigate = useNavigate();
   const [lobbies, setLobbies] = useState<LobbySummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+
+  // no username yet -> set one first
+  useEffect(() => {
+    if (!userName) navigate("/");
+  }, [userName, navigate]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -47,7 +52,7 @@ function App() {
 
   return (
     <>
-      <div className="card"><p>Hello, {userName}!</p></div>
+      <div className="card" style={{ cursor: "pointer" }} onClick={() => navigate("/")}><p>Hello, {userName}!</p></div>
       <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>United States - New York</p>
 
       <div className="main">

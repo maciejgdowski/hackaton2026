@@ -23,6 +23,8 @@ export interface GamePlayer {
   diedAt: number | null;
   killedBy: string | null;
   gateUntil: number; // sonar stays on until this time after the last "close on GPS"
+  lastScanAt: number | null;
+  contacts: string[]; // runners this runner exchanged data with (they see each other on the map)
 }
 
 export interface GameResult {
@@ -36,7 +38,6 @@ export interface GameState {
   endsAt: number;
   zone: { center: Coordinates; radius: number }; // radius in metres
   players: Map<string, GamePlayer>; // UUID -> player
-  lastKillAt: number | null;
   clue: { at: number; positions: { id: string; lat: number; lng: number }[] } | null; // last snapshot hunters got
   result: GameResult | null;
 }
@@ -44,7 +45,7 @@ export interface GameState {
 // ---------- tuning ----------
 
 export const ROUND_DURATION_MS = 10 * 60_000;
-export const KILL_COOLDOWN_MS = 30_000;
+export const SCAN_COOLDOWN_MS = 30_000; // after every scan, for hunters and runners alike
 export const KILL_MAX_DISTANCE_M = 50; // the 2 m check is the sonar's job; GPS only rejects the impossible
 export const LOCATION_MAX_AGE_MS = 30_000; // older fixes count as "no GPS"
 
@@ -117,6 +118,8 @@ export function createGame(
       diedAt: null,
       killedBy: null,
       gateUntil: 0,
+      lastScanAt: null,
+      contacts: [],
     });
   });
 
@@ -125,7 +128,6 @@ export function createGame(
     endsAt: now + ROUND_DURATION_MS,
     zone: { center: props.center, radius: ZONE_RADIUS_M[props.radius] },
     players,
-    lastKillAt: null,
     clue: null,
     result: null,
   };
@@ -144,34 +146,50 @@ export function updateLocation(game: GameState, userId: string, body: unknown, n
   player.location = { lat, lng, accuracy, recordedAt: now };
 }
 
-// The hunter's phone decides "within 2 m" with the sonar; the server checks everything else.
-export function kill(game: GameState, killerId: string, targetId: unknown, now = Date.now()) {
+// Everyone has the same "Scan" button, so nobody can tell roles apart by looking at a screen.
+// The phone only allows a scan once the sonar says the target is within ~2 m; the server checks the rest.
+//   hunter -> runner: caught (out of the game)
+//   runner -> runner: exchange data (from now on they see each other on the map)
+//   anything else:    nothing happens (still costs the cooldown)
+export type ScanResult = "caught" | "linked" | "already linked" | "nothing";
+
+export function scan(game: GameState, scannerId: string, targetId: unknown, now = Date.now()): { result: ScanResult; name: string } {
   checkEnd(game, now);
   if (game.result) throw new GameError("The game is over.", 409);
 
-  const killer = game.players.get(killerId);
-  if (!killer) throw new GameError("You are not in this game.", 403);
-  if (killer.role !== "hunter") throw new GameError("Only hunters can kill.", 403);
-  if (!killer.alive) throw new GameError("You are out of the game.", 403);
+  const scanner = game.players.get(scannerId);
+  if (!scanner) throw new GameError("You are not in this game.", 403);
+  if (!scanner.alive) throw new GameError("You are out of the game.", 403);
 
   const target = typeof targetId === "string" ? game.players.get(targetId) : undefined;
-  if (!target || target === killer) throw new GameError("Unknown target.", 404);
-  if (target.role === "hunter") throw new GameError("Hunters cannot kill each other.", 409);
+  if (!target || target === scanner) throw new GameError("Unknown target.", 404);
   if (!target.alive) throw new GameError("That player is already out.", 409);
 
-  const cooldownLeft = game.lastKillAt === null ? 0 : KILL_COOLDOWN_MS - (now - game.lastKillAt);
-  if (cooldownLeft > 0) throw new GameError(`Kill cooling down (${Math.ceil(cooldownLeft / 1000)} s).`, 429);
+  const cooldownLeft = scanner.lastScanAt === null ? 0 : SCAN_COOLDOWN_MS - (now - scanner.lastScanAt);
+  if (cooldownLeft > 0) throw new GameError(`Scanner recharging (${Math.ceil(cooldownLeft / 1000)} s).`, 429);
 
-  if (hasFreshLocation(killer, now) && hasFreshLocation(target, now)
-    && distanceMeters(killer.location!, target.location!) > KILL_MAX_DISTANCE_M) {
+  if (hasFreshLocation(scanner, now) && hasFreshLocation(target, now)
+    && distanceMeters(scanner.location!, target.location!) > KILL_MAX_DISTANCE_M) {
     throw new GameError("Target is too far away.", 409);
   }
 
-  target.alive = false;
-  target.diedAt = now;
-  target.killedBy = killerId;
-  game.lastKillAt = now;
-  checkEnd(game, now);
+  if (scanner.role === "runner" && target.role === "runner") {
+    if (scanner.contacts.includes(targetId as string)) return { result: "already linked", name: target.name };
+    scanner.contacts.push(targetId as string);
+    target.contacts.push(scannerId);
+    scanner.lastScanAt = now;
+    return { result: "linked", name: target.name };
+  }
+
+  scanner.lastScanAt = now;
+  if (scanner.role === "hunter" && target.role === "runner") {
+    target.alive = false;
+    target.diedAt = now;
+    target.killedBy = scannerId;
+    checkEnd(game, now);
+    return { result: "caught", name: target.name };
+  }
+  return { result: "nothing", name: target.name };
 }
 
 // Leaving mid-round counts as being out.
@@ -271,7 +289,12 @@ export function serializeGame(
     })),
     sonar: SONAR,
     sonarOn: sonarGate(game, userId, now),
-    killCooldownUntil: self.role === "hunter" && game.lastKillAt !== null ? game.lastKillAt + KILL_COOLDOWN_MS : null,
+    scanCooldownUntil: self.lastScanAt !== null ? self.lastScanAt + SCAN_COOLDOWN_MS : null,
+    // runners you exchanged data with: their live position
+    contacts: self.contacts
+      .map((id) => ({ id, p: game.players.get(id) }))
+      .filter(({ p }) => p && p.alive && p.location && now - p.location.recordedAt <= LOCATION_MAX_AGE_MS)
+      .map(({ id, p }) => ({ id, name: p!.name, lat: p!.location!.lat, lng: p!.location!.lng })),
     clue: self.role === "hunter" && game.clue && !game.result
       ? { ...game.clue, nextAt: game.clue.at + interval }
       : null,

@@ -1,7 +1,7 @@
 import "./Style.css";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Circle, CircleMarker } from "react-leaflet";
+import { Circle, CircleMarker, Tooltip } from "react-leaflet";
 import GameBackgroundMap from "./GameBackgroundMap";
 import {
   configureSonar,
@@ -38,7 +38,8 @@ interface GameState {
   players: GamePlayer[];
   sonar: SonarConfig;
   sonarOn: boolean;
-  killCooldownUntil: number | null;
+  scanCooldownUntil: number | null;
+  contacts: { id: string; name: string; lat: number; lng: number }[]; // runners you exchanged data with
   clue: { at: number; nextAt: number; positions: { id: string; lat: number; lng: number }[] } | null;
   result: { winner: "hunter" | "runner"; reason: string; endedAt: number } | null;
 }
@@ -51,7 +52,8 @@ export default function GamePage() {
   const [error, setError] = useState("");
   const [soundOn, setSoundOn] = useState(isSonarReady());
   const [myPosition, setMyPosition] = useState<{ lat: number; lng: number } | null>(null);
-  const [isKilling, setIsKilling] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
   const [, setTick] = useState(0);
   const lastSentAt = useRef(0);
   const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -145,12 +147,14 @@ export default function GamePage() {
     }
   }
 
-  async function killPlayer(targetId: string) {
+  // Same button for everyone. Hunter: catches a runner. Runner: exchanges data with another runner.
+  async function scanPlayer(targetId: string) {
     if (!gameId || !userId) return;
-    setIsKilling(true);
+    setIsScanning(true);
+    setScanMessage("");
     try {
       const response = await fetch(
-        `${API_URL}/game/${encodeURIComponent(gameId)}/kill?userId=${encodeURIComponent(userId)}`,
+        `${API_URL}/game/${encodeURIComponent(gameId)}/scan?userId=${encodeURIComponent(userId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -159,13 +163,18 @@ export default function GamePage() {
       );
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error ?? `Could not kill (${response.status}).`);
+        throw new Error(data.error ?? `Could not scan (${response.status}).`);
       }
+      const data = (await response.json()) as { result: string; name: string };
+      if (data.result === "caught") setScanMessage(`${data.name} caught`);
+      else if (data.result === "linked") setScanMessage(`Data exchanged with ${data.name} – you can see each other on the map`);
+      else if (data.result === "already linked") setScanMessage(`Already exchanged data with ${data.name}`);
+      else setScanMessage("No data received");
       navigator.vibrate?.(200);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not kill.");
+      setScanMessage(requestError instanceof Error ? requestError.message : "Could not scan.");
     } finally {
-      setIsKilling(false);
+      setIsScanning(false);
     }
   }
 
@@ -183,7 +192,7 @@ export default function GamePage() {
       <div className="main" style={{ justifyContent: "center", height: "80vh" }}>
         <div className="card" style={{ width: "70vw" }}>
           <p>{error || "Loading game..."}</p>
-          {error && <button onClick={() => navigate("/")}>Back</button>}
+          {error && <button onClick={() => navigate("/lobbies")}>Back</button>}
         </div>
       </div>
     );
@@ -227,6 +236,16 @@ export default function GamePage() {
             pathOptions={{ color: "#b5b5b1", fillColor: "#b5b5b1", fillOpacity: 0.4 }}
           />
         ))}
+        {gameData.contacts.map((contact) => (
+          <CircleMarker
+            key={contact.id}
+            center={[contact.lat, contact.lng]}
+            radius={7}
+            pathOptions={{ color: "#f2f2f0", fillColor: "#767673", fillOpacity: 1 }}
+          >
+            <Tooltip direction="top" offset={[0, -8]} permanent>{contact.name}</Tooltip>
+          </CircleMarker>
+        ))}
         {myPosition && self.alive && (
           <CircleMarker
             center={[myPosition.lat, myPosition.lng]}
@@ -243,8 +262,10 @@ export default function GamePage() {
             <p>{!self.alive ? "Signal lost" : isHunter ? "Hunter" : "Runner"}</p>
             <p style={{ fontFamily: "var(--tm-font-mono)" }}>{timeLeft}</p>
             <p>Runners: {runnersLeft}</p>
-            {isHunter && gameData.clue && (
-              <p>Clue in {Math.max(0, Math.ceil((gameData.clue.nextAt - (Date.now() + clockOffset)) / 1000))}s</p>
+            {isHunter ? (
+              <p>Clue {gameData.clue ? `${Math.max(0, Math.ceil((gameData.clue.nextAt - (Date.now() + clockOffset)) / 1000))}s` : "–"}</p>
+            ) : (
+              <p>Contacts: {gameData.contacts.length}</p>
             )}
           </div>
         </div>
@@ -275,13 +296,8 @@ export default function GamePage() {
                 <p>The sonar needs sound and the microphone.</p>
                 <button data-variant="primary" onClick={enableSound}>Enable sound</button>
               </>
-            ) : isHunter ? (
-              <KillButtons gameData={gameData} clockOffset={clockOffset} isKilling={isKilling} onKill={killPlayer} />
             ) : (
-              <>
-                <h3>Hide</h3>
-                <p style={{ fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>Sonar {gameData.sonarOn ? "on – someone is close" : "off – nobody close"}</p>
-              </>
+              <ScanButton gameData={gameData} clockOffset={clockOffset} isScanning={isScanning} message={scanMessage} onScan={scanPlayer} />
             )}
           </div>
         </div>
@@ -290,51 +306,60 @@ export default function GamePage() {
   );
 }
 
-interface KillButtonsProps {
+interface ScanButtonProps {
   gameData: GameState;
   clockOffset: number;
-  isKilling: boolean;
-  onKill: (targetId: string) => void;
+  isScanning: boolean;
+  message: string;
+  onScan: (targetId: string) => void;
 }
 
-// One button per runner the sonar hears within ~2 m. It fills up for HOLD_S seconds, then you can kill.
-function KillButtons({ gameData, clockOffset, isKilling, onKill }: KillButtonsProps) {
+// The same for hunters and runners. Fills up while the sonar hears someone within ~2 m
+// for HOLD_S seconds, then you can scan them.
+function ScanButton({ gameData, clockOffset, isScanning, message, onScan }: ScanButtonProps) {
   const now = Date.now() + clockOffset;
-  const cooldownLeft = gameData.killCooldownUntil ? Math.ceil((gameData.killCooldownUntil - now) / 1000) : 0;
+  const cooldownLeft = gameData.scanCooldownUntil ? Math.ceil((gameData.scanCooldownUntil - now) / 1000) : 0;
 
-  if (cooldownLeft > 0) {
-    return <button disabled>Recharging {cooldownLeft}s</button>;
+  // the closest player = the one the sonar has heard the longest
+  let target: GamePlayer | null = null;
+  let heldS = 0;
+  for (const player of gameData.players) {
+    if (player.id === gameData.self.id || !player.alive) continue;
+    const proximity = getProximity(player.slot);
+    if (proximity.near && (target === null || proximity.heldS > heldS)) {
+      target = player;
+      heldS = proximity.heldS;
+    }
   }
 
-  const targets = gameData.players
-    .filter((player) => player.id !== gameData.self.id && player.alive && player.role !== "hunter")
-    .map((player) => ({ player, proximity: getProximity(player.slot) }))
-    .filter((target) => target.proximity.near);
+  const charged = target !== null && heldS >= HOLD_S && cooldownLeft <= 0;
+  const percent = cooldownLeft > 0 || target === null ? 0 : Math.min(100, (heldS / HOLD_S) * 100);
 
-  if (targets.length === 0) {
-    return <button disabled>{gameData.sonarOn ? "No runner within 2 m" : "Nobody close"}</button>;
-  }
+  let status = "";
+  if (cooldownLeft > 0) status = `Recharging ${cooldownLeft}s`;
+  else if (charged && target) status = `${target.name} in range`;
+  else if (target) status = "Stay close...";
+  else if (gameData.sonarOn) status = "Nobody within 2 m";
+  else status = "Nobody close";
 
   return (
     <>
-      {targets.map(({ player, proximity }) => {
-        const charged = proximity.heldS >= HOLD_S;
-        const percent = Math.min(100, (proximity.heldS / HOLD_S) * 100);
-        return (
-          <button
-            key={player.id}
-            data-variant={charged ? "primary" : undefined}
-            disabled={!charged || isKilling}
-            onClick={() => onKill(player.id)}
-            style={{
-              width: "60vw",
-              background: charged ? undefined : `linear-gradient(to right, var(--tm-bg-active) ${percent}%, transparent ${percent}%)`,
-            }}
-          >
-            {charged ? `Kill ${player.name}` : `${player.name} · stay close`}
-          </button>
-        );
-      })}
+      <button
+        data-variant={charged ? "primary" : undefined}
+        disabled={!charged || isScanning}
+        onClick={() => {
+          if (target) onScan(target.id);
+        }}
+        style={{
+          width: "60vw",
+          height: "6vh",
+          background: charged ? undefined : `linear-gradient(to right, var(--tm-bg-active) ${percent}%, transparent ${percent}%)`,
+        }}
+      >
+        {isScanning ? "Scanning..." : "Scan"}
+      </button>
+      <p style={{ fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)", margin: 0 }}>{status}</p>
+      {message && <p style={{ fontSize: "0.75rem", margin: 0 }}>{message}</p>}
     </>
   );
 }

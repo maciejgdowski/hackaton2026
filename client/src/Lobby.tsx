@@ -53,7 +53,7 @@ export default function Lobby() {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "Player" }),
+        body: JSON.stringify({ username: localStorage.getItem("username") ?? "Player" }),
       }
     );
     if (!joinResponse.ok) {
@@ -122,7 +122,7 @@ export default function Lobby() {
         } else if (message.type === "game:start" && message.gameId) {
           navigate(`/game/${message.gameId}`);
         } else if (message.type === "lobby:closed") {
-          navigate("/");
+          navigate("/lobbies");
         }
       } catch (messageError) {
         console.error("Could not read lobby update:", messageError);
@@ -133,7 +133,7 @@ export default function Lobby() {
 
   async function quitGame() {
     if (!lobbyId || !userId) {
-      navigate("/");
+      navigate("/lobbies");
       return;
     }
     try {
@@ -142,7 +142,7 @@ export default function Lobby() {
         { method: "DELETE" }
       );
       if (!response.ok) throw new Error(`Could not leave lobby (${response.status}).`);
-      navigate("/");
+      navigate("/lobbies");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not leave lobby.");
     }
@@ -176,7 +176,7 @@ export default function Lobby() {
         const data = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error ?? `Could not disband lobby (${response.status}).`);
       }
-      navigate("/");
+      navigate("/lobbies");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Could not disband lobby.");
     }
