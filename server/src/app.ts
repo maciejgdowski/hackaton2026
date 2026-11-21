@@ -6,9 +6,11 @@ import { WebSocket, WebSocketServer } from "ws";
 import http, { IncomingMessage } from 'http';
 import { Duplex } from "stream";
 import {
-  checkEnd, createGame, removePlayer, scan, serializeGame, updateLocation,
-  GameError, type GameState, type Status,
+  castVote, createGame, dropData, kill, removePlayer, serializeGame, share, startDownload, startUpload, startVote,
+  tickGame, updateHeard, updateLocation, GameError, ZONE_RADIUS_M, type Coordinates, type GameState, type Status,
 } from "./game.ts";
+import { checkArea, placeTasks } from "./places.ts";
+import { distanceMeters } from "./game.ts";
 
 const allowedOrigins = (env.WEB_ORIGIN ?? "http://localhost:3000")
   .split(",")
@@ -44,8 +46,6 @@ interface LobbyProps {
   radius: "small" | "medium" | "large";
   center: { lat: number; lng: number };
   players: number;
-  hunters: 1 | 2;
-  clues: "easy" | "medium" | "hard";
 }
 
 interface LobbyState {
@@ -65,6 +65,9 @@ interface GameWebSocket extends WebSocket {
 const lobbies = new Map<string, LobbyState>();
 const lobbySockets = new Map<string, Set<WebSocket>>();
 const gameSockets = new Map<string, Set<GameWebSocket>>();
+const startingLobbies = new Set<string>(); // lobbies whose game is being set up right now
+// Good spots for tasks inside each lobby's zone, checked with Mapbox in the background (see places.ts)
+const lobbySpots = new Map<string, Promise<Coordinates[]>>();
 
 // What a phone sends once a second: { type: "player:location", location: {...} }
 interface PlayerLocation {
@@ -89,14 +92,32 @@ function serializeLobby(lobbyId: string, lobby: LobbyState) {
   return { ...rest, id: lobbyId, members: Object.fromEntries(lobby.members) };
 }
 
+// One player's view of the game, plus how many players are still in the lobby
+// (when everyone else has quit, the phone goes back to the main menu).
+function gameView(lobby: LobbyState, userId: string) {
+  if (!lobby.game) return null;
+  const game = serializeGame(lobby.game, userId);
+  return game ? { ...game, membersLeft: lobby.members.size } : null;
+}
+
 // Every player gets their own view (role, sonar, map), so each socket gets its own message.
 function broadcastGameUpdate(lobbyId: string) {
   const lobby = lobbies.get(lobbyId);
   for (const socket of gameSockets.get(lobbyId) ?? []) {
     if (socket.readyState !== WebSocket.OPEN) continue;
-    const game = lobby?.game && socket.userId ? serializeGame(lobby.game, socket.userId) : null;
+    const game = lobby && socket.userId ? gameView(lobby, socket.userId) : null;
     socket.send(JSON.stringify(game ? { type: "game:update", game } : { type: "game:closed", gameId: lobbyId }));
   }
+}
+
+// Is this spot inside the lobby's play area? GPS can be off, so allow up to 25 m of its reported inaccuracy.
+// Used so you can only host where you are, and only see / join lobbies you are standing in.
+function isInsideZone(props: LobbyProps, location: unknown) {
+  const spot = location as { lat?: unknown; lng?: unknown; accuracy?: unknown } | null;
+  if (!spot || typeof spot.lat !== "number" || typeof spot.lng !== "number") return false;
+  const accuracy = typeof spot.accuracy === "number" && spot.accuracy > 0 ? spot.accuracy : 0;
+  const meters = distanceMeters(props.center, { lat: spot.lat, lng: spot.lng });
+  return meters <= ZONE_RADIUS_M[props.radius] + Math.min(accuracy, 25);
 }
 
 function sendError(res: Response, error: unknown) {
@@ -136,11 +157,10 @@ app.post("/lobby/create", (req: Request, res: Response) => {
     return;
   }
 
-  const { name, radius, center, players, hunters, clues, username } = req.body;
+  const { name, radius, center, players, username, hostLocation } = req.body;
   const validRadii = ["small", "medium", "large"];
-  const validClues = ["easy", "medium", "hard"];
 
-  if (!validRadii.includes(radius) || !validClues.includes(clues)) {
+  if (!validRadii.includes(radius)) {
     res.status(400).json({ error: "Invalid lobby settings" });
     return;
   }
@@ -152,8 +172,9 @@ app.post("/lobby/create", (req: Request, res: Response) => {
     res.status(400).json({ error: "Player count must be between 2 and 8" });
     return;
   }
-  if (!Number.isInteger(hunters) || (hunters !== 1 && hunters !== 2)) {
-    res.status(400).json({ error: "Hunter count must be 1 or 2" });
+
+  if (!isInsideZone({ radius, center, players }, hostLocation)) {
+    res.status(403).json({ error: "You have to be inside the play area to host it." });
     return;
   }
 
@@ -162,12 +183,13 @@ app.post("/lobby/create", (req: Request, res: Response) => {
   const lobbyName = typeof name === "string" && name.trim() ? name.trim() : `${playerName}'s lobby`;
   const lobbyState: LobbyState = {
     name: lobbyName,
-    props: { radius, center, players, hunters, clues },
+    props: { radius, center, players },
     members: new Map([[userId, playerName]]),
     status: "waiting",
     game: null,
   };
   lobbies.set(lobbyId, lobbyState);
+  lobbySpots.set(lobbyId, checkArea(center, ZONE_RADIUS_M[radius as LobbyProps["radius"]]).catch(() => []));
   console.log(`Lobby created: ${lobbyId}`, lobbyState);
   res.status(201).json({ lobbyId });
 });
@@ -234,8 +256,12 @@ wss.on("connection", (socket) => {
       }
       try {
         const message = JSON.parse(raw.toString());
-        if (message.type !== "player:location" || !isLocation(message.location)) return;
-        updateLocation(game, userId, message.location);
+        if (message.type === "player:location" && isLocation(message.location)) {
+          updateLocation(game, userId, message.location);
+        } else if (message.type === "player:nearby") {
+          // sonar: which phones this one hears within ~2 m (for touching phones / votes)
+          updateHeard(game, userId, message.slots);
+        }
       } catch { /* Ignore malformed messages without interrupting other players. */ }
     });
     socket.on("close", () => {
@@ -243,7 +269,7 @@ wss.on("connection", (socket) => {
       if (sockets.size === 0) gameSockets.delete(gameId);
     });
 
-    const game = serializeGame(lobby.game, userId);
+    const game = gameView(lobby, userId);
     if (game) socket.send(JSON.stringify({ type: "game:update", game }));
     socket.send(JSON.stringify({ type: "location:start" }));
     return;
@@ -285,13 +311,22 @@ app.get("/lobby/:lobbyId", (req: Request, res: Response) => {
   res.json(serializeLobby(lobbyId, lobby));
 });
 
-app.get("/lobbies", (_req: Request, res: Response) => {
-  const lobbyList = Array.from(lobbies, ([id, lobby]) => ({
-    id,
-    name: lobby.name,
-    playerCount: lobby.members.size,
-    maxPlayers: lobby.props.players,
-  }));
+// Only lobbies still waiting whose play area you stand in (?lat=&lng=&accuracy=), plus the ones you are already in (?userId=).
+app.get("/lobbies", (req: Request, res: Response) => {
+  const here = {
+    lat: Number(req.query.lat),
+    lng: Number(req.query.lng),
+    accuracy: Number(req.query.accuracy) || 0,
+  };
+  const userId = typeof req.query.userId === "string" ? req.query.userId : "";
+  const lobbyList = Array.from(lobbies)
+    .filter(([, lobby]) => lobby.members.has(userId) || (lobby.status === "waiting" && isInsideZone(lobby.props, here)))
+    .map(([id, lobby]) => ({
+      id,
+      name: lobby.name,
+      playerCount: lobby.members.size,
+      maxPlayers: lobby.props.players,
+    }));
   res.json(lobbyList);
 });
 
@@ -311,6 +346,7 @@ app.delete("/lobby/:lobbyId", (req: Request, res: Response) => {
   }
 
   lobbies.delete(lobbyId);
+  lobbySpots.delete(lobbyId);
   broadcastLobbyUpdate(lobbyId);
   broadcastGameUpdate(lobbyId);
   for (const socket of lobbySockets.get(lobbyId) ?? []) socket.close(1000, "Lobby disbanded");
@@ -329,6 +365,10 @@ app.post("/lobby/:lobbyId/join", (req: Request, res: Response) => {
   }
   if (!userId) {
     res.status(401).json({ error: "A valid userId is required" });
+    return;
+  }
+  if (!lobby.members.has(userId) && !isInsideZone(lobby.props, req.body?.location)) {
+    res.status(403).json({ error: "You have to be inside this lobby's play area to join." });
     return;
   }
   if (!lobby.members.has(userId) && lobby.members.size >= lobby.props.players) {
@@ -374,7 +414,10 @@ app.delete("/lobby/:lobbyId/leave", (req: Request, res: Response) => {
       if (socket.userId === userId) socket.close(1000, "Left game.");
     }
   }
-  if (lobby.members.size === 0) lobbies.delete(lobbyId);
+  if (lobby.members.size === 0) {
+    lobbies.delete(lobbyId);
+    lobbySpots.delete(lobbyId);
+  }
   broadcastLobbyUpdate(lobbyId);
   broadcastGameUpdate(lobbyId);
   res.status(204).end();
@@ -383,9 +426,9 @@ app.delete("/lobby/:lobbyId/leave", (req: Request, res: Response) => {
 // ---------- game ----------
 // The lobby ID is also the game ID: /game/:gameId and the WebSocket at /game/:gameId?userId=...
 
-// Admin starts the round: picks killers, gives every player a sonar slot,
+// Admin starts the round: places the towers and points, picks the killer, gives every player a sonar slot,
 // and tells the lobby page to move to /game/:gameId.
-app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
+app.post("/lobby/:lobbyId/start", async (req: Request, res: Response) => {
   const lobbyId = req.params.lobbyId as string;
   const lobby = lobbies.get(lobbyId);
   const userId = authenticateUser(req);
@@ -399,16 +442,26 @@ app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
     res.status(403).json({ error: "Only the lobby admin can start the game." });
     return;
   }
-  if (lobby.status !== "waiting") {
+  if (lobby.status !== "waiting" || startingLobbies.has(lobbyId)) {
     res.status(409).json({ error: "This game is not waiting to start." });
     return;
   }
+  if (lobby.members.size < 2) {
+    res.status(409).json({ error: "At least two players are required." });
+    return;
+  }
 
+  // The spots were checked in the background since the lobby was created (usually done by now).
+  startingLobbies.add(lobbyId);
   try {
-    lobby.game = createGame(lobby.members, lobby.props);
+    const spots = await (lobbySpots.get(lobbyId) ?? Promise.resolve([]));
+    const layout = placeTasks(lobby.props.center, ZONE_RADIUS_M[lobby.props.radius], lobby.members.size - 1, spots);
+    lobby.game = createGame(lobby.members, lobby.props, layout);
   } catch (error) {
     sendError(res, error);
     return;
+  } finally {
+    startingLobbies.delete(lobbyId);
   }
   lobby.status = "playing";
   console.log(`Game started: ${lobbyId}`);
@@ -459,7 +512,7 @@ app.get("/game/:gameId", (req: Request, res: Response) => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const game = userId ? serializeGame(lobby.game, userId) : null;
+  const game = userId ? gameView(lobby, userId) : null;
   if (!game) {
     res.status(403).json({ error: "You are not in this game." });
     return;
@@ -467,9 +520,9 @@ app.get("/game/:gameId", (req: Request, res: Response) => {
   res.json(game);
 });
 
-// Body: { targetId }. Same button for everyone: a killer catches a seeker, two seekers exchange data.
-// The phone only allows this once the sonar says the target is within ~2 m.
-app.post("/game/:gameId/scan", (req: Request, res: Response) => {
+// Every game action below works the same way: check the game exists, run the rule from game.ts,
+// then push fresh views to everyone. Errors from the rules come back as { error }.
+function gameAction(req: Request, res: Response, action: (game: GameState, userId: string) => unknown) {
   const gameId = req.params.gameId as string;
   const lobby = lobbies.get(gameId);
   const userId = authenticateUser(req);
@@ -480,23 +533,60 @@ app.post("/game/:gameId/scan", (req: Request, res: Response) => {
   }
   let outcome;
   try {
-    outcome = scan(lobby.game, userId ?? "", req.body?.targetId);
+    outcome = action(lobby.game, userId ?? "");
   } catch (error) {
     sendError(res, error);
     return;
   }
-  if (lobby.game.result) lobby.status = "finished";
-  broadcastLobbyUpdate(gameId);
+  if (lobby.game.result) {
+    lobby.status = "finished";
+    broadcastLobbyUpdate(gameId);
+  }
   broadcastGameUpdate(gameId);
-  res.json(outcome);
+  res.json(outcome ?? { success: true });
+}
+
+// Body: { targetId, action: "share" | "kill" }. The phone only allows this once the sonar says
+// the target is within ~2 m. Share copies clues both ways; kill is the killer holding the button.
+app.post("/game/:gameId/scan", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => {
+    if (req.body?.action === "kill") return kill(game, userId, req.body?.targetId);
+    return share(game, userId, req.body?.targetId);
+  });
 });
 
-// Once a second: end rounds whose timer ran out and push fresh views
-// (sonar on/off follows GPS, map pings refresh, countdown stays in sync).
+// Body: { pointId }. Start downloading at a point (you have to stand at it).
+app.post("/game/:gameId/download", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => startDownload(game, userId, req.body?.pointId));
+});
+
+// Upload the data you carry at its tower (you have to stand at it).
+app.post("/game/:gameId/upload", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => startUpload(game, userId));
+});
+
+// Stop downloading / throw away the data you carry.
+app.post("/game/:gameId/drop", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => dropData(game, userId));
+});
+
+// Start a vote with everyone whose phone is touching yours.
+app.post("/game/:gameId/vote/start", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => startVote(game, userId));
+});
+
+// Body: { targetId } (null = skip).
+app.post("/game/:gameId/vote", (req: Request, res: Response) => {
+  gameAction(req, res, (game, userId) => castVote(game, userId, req.body?.targetId ?? null));
+});
+
+// Once a second: downloads, deliveries, votes, the zone rule, then push fresh views
+// (sonar on/off follows GPS, map pings refresh, the game clock stays in sync).
 setInterval(() => {
   for (const [lobbyId, lobby] of lobbies) {
     if (lobby.status !== "playing" || !lobby.game) continue;
-    if (checkEnd(lobby.game)) {
+    tickGame(lobby.game);
+    if (lobby.game.result) {
       lobby.status = "finished";
       broadcastLobbyUpdate(lobbyId);
     }

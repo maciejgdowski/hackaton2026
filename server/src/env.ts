@@ -8,6 +8,7 @@ if (process.env.VERCEL !== "1") {
 const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   WEB_ORIGIN: z.string().optional().default("http://localhost:5173"),
+  MAPBOX_TOKEN: z.string().optional(), // places tasks away from water and buildings (optional)
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,7 +1,7 @@
 import "./Style.css";
 import { useNavigate, useParams } from "react-router-dom";
 import MapBackground from "./MapBackground";
-import { getPlaceName } from "./Location";
+import { getPlaceName, requestLocation } from "./Location";
 import { useEffect, useRef, useState } from "react";
 
 interface LobbyState {
@@ -11,8 +11,6 @@ interface LobbyState {
     radius: "small" | "medium" | "large";
     center: { lat: number; lng: number };
     players: number;
-    hunters: 1 | 2;
-    clues: "easy" | "medium" | "hard";
   };
   members: Record<string, string>;
   status: "waiting" | "playing" | "finished";
@@ -51,12 +49,14 @@ export default function Lobby() {
       localStorage.setItem("userId", activeUserId);
     }
 
+    // New players have to stand inside the lobby's play area (the server checks)
+    const location = await requestLocation().catch(() => null);
     const joinResponse = await fetch(
       `${API_URL}/lobby/${encodeURIComponent(id)}/join?userId=${encodeURIComponent(activeUserId)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: localStorage.getItem("username") ?? "Player" }),
+        body: JSON.stringify({ username: localStorage.getItem("username") ?? "Player", location }),
       }
     );
     if (!joinResponse.ok) {
@@ -194,12 +194,12 @@ export default function Lobby() {
   return (
     <>
       <div className="card"><p>{isAdmin ? "You are the lobby admin" : "Waiting for host..."}</p></div>
-      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
+      <p style={{ marginLeft: "1cqw", marginTop: "0.1cqh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
 
       <div className="main">
-        <div className="card" style={{ width: "70vw" }}>
+        <div className="card" style={{ width: "70cqw" }}>
           <h4>{lobbyData?.name ?? "Lobby"} · Players ({members.length}{lobbyData ? `/${lobbyData.props.players}` : ""})</h4>
-          <div className="list" style={{ paddingBottom: "1vh" }}>
+          <div className="list" style={{ paddingBottom: "1cqh" }}>
             {isLoading && <p>Loading lobby...</p>}
             {error && (
               <div role="alert">
@@ -216,14 +216,14 @@ export default function Lobby() {
           </div>
           </div>
           {!isLoading && !error && (isAdmin ? (
-            <div style={{ display: "flex", gap: "10vw" }}>
-              <button style={{ width:"30vw", height:"10vh" }} onClick={disbandLobby}>Disband lobby</button>
-              <button style={{ width:"30vw", height:"10vh" }} onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
+            <div style={{ display: "flex", gap: "10cqw" }}>
+              <button style={{ width:"30cqw", height:"10cqh" }} onClick={disbandLobby}>Disband lobby</button>
+              <button style={{ width:"30cqw", height:"10cqh" }} onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
             </div>
           ) : (
-            <div style={{ display: "flex",  gap: "10vw" }}>
-              <button style={{ width:"30vw", height:"10vh" }} onClick={quitGame}>Quit lobby</button>
-              <button style={{ width:"30vw", height:"10vh" }} type="button" disabled aria-live="polite">Waiting on host...</button>
+            <div style={{ display: "flex",  gap: "10cqw" }}>
+              <button style={{ width:"30cqw", height:"10cqh" }} onClick={quitGame}>Quit lobby</button>
+              <button style={{ width:"30cqw", height:"10cqh" }} type="button" disabled aria-live="polite">Waiting on host...</button>
             </div>
           ))}
           {startError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize: "0.75rem" }}>{startError}</p>}

@@ -5,41 +5,46 @@ import { useNavigate } from "react-router-dom";
 import "./LocationPickerMap";
 import LocationPickerMap, { type Coordinates } from "./LocationPickerMap";
 import { useEffect, useRef, useState } from "react";
+import { requestLocation } from "./Location";
+
+// Same sizes as ZONE_RADIUS_M on the server (metres)
+const ZONE_RADIUS_M = { sm: 150, md: 300, lg: 500 };
 
 export default function Create() {
   const navigate = useNavigate();
 
   const [location, setLocation] = useState<Coordinates | null>(null);
-  const manuallySelectedLocation = useRef(false);
+  const [myLocation, setMyLocation] = useState<Coordinates | null>(null); // where I am (shown on the map)
+  const pinPlaced = useRef(false);
   const [locationStatus, setLocationStatus] = useState("Finding your current location...");
 
+  // Follow my GPS: the map shows where I am, and the pin starts there until I pick another point.
   useEffect(() => {
-    let active = true;
     if (!navigator.geolocation) {
       setLocationStatus("Location is unavailable. Choose a point on the map.");
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    const watchId = navigator.geolocation.watchPosition(
       ({ coords }) => {
-        if (!active || manuallySelectedLocation.current) return;
-        setLocation({ lat: coords.latitude, lng: coords.longitude });
+        const here = { lat: coords.latitude, lng: coords.longitude };
+        setMyLocation(here);
+        if (pinPlaced.current) return;
+        setLocation(here);
         setLocationStatus("Using your current location. Click the map to choose another point.");
+        pinPlaced.current = true; // only the first GPS fix moves the pin, after that it stays where it is
       },
       () => {
-        if (!active || manuallySelectedLocation.current) return;
+        if (pinPlaced.current) return;
         setLocationStatus("Could not get your location. Choose a point on the map.");
       },
-      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 10_000 },
+      { enableHighAccuracy: true, maximumAge: 10_000, timeout: 10_000 },
     );
-    return () => { active = false; };
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
   const [lobbyName, setLobbyName] = useState("");
   const [playerCount, setPlayerCount] = useState("2");
-  const [hunterCount, setHunterCount] = useState("1");
   const [playerCountError, setPlayerCountError] = useState("");
-  const [hunterCountError, setHunterCountError] = useState("");
   const [mapSize, setMapSize] = useState<"sm" | "md" | "lg">("md");
-  const [clueDensity, setClueDensity] = useState<"sm" | "md" | "lg">("md");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
@@ -67,14 +72,17 @@ export default function Create() {
       return;
     }
     const nextPlayerCountError = validateCount(playerCount, "Player count", 2, 8);
-    const nextHunterCountError = validateCount(hunterCount, "Killer count", 1, 2);
     setPlayerCountError(nextPlayerCountError);
-    setHunterCountError(nextHunterCountError);
-    if (nextPlayerCountError || nextHunterCountError) return;
+    if (nextPlayerCountError) return;
 
     setIsCreating(true);
 
     try {
+      // You can only host where you are: the server checks you stand inside the play area.
+      const hostLocation = await requestLocation().catch(() => {
+        throw new Error("Allow location access: you have to be inside the play area to host.");
+      });
+
       const storedUserId = localStorage.getItem("userId");
       const userResponse = await fetch(
         `${API_URL}/getNewUser${
@@ -94,7 +102,6 @@ export default function Create() {
       localStorage.setItem("userId", userData.userId);
 
       const radiusMap = { sm: "small", md: "medium", lg: "large" } as const;
-      const clueMap = { sm: "easy", md: "medium", lg: "hard" } as const;
 
       const lobbyResponse = await fetch(
         `${API_URL}/lobby/create?userId=${encodeURIComponent(userData.userId)}`,
@@ -105,10 +112,9 @@ export default function Create() {
             radius: radiusMap[mapSize],
             center: location,
             players: Number(playerCount),
-            hunters: Number(hunterCount),
-            clues: clueMap[clueDensity],
             name: lobbyName,
             username: localStorage.getItem("username") ?? "Player",
+            hostLocation,
           }),
         }
       );
@@ -148,8 +154,8 @@ export default function Create() {
       </div>
       <p
         style={{
-          marginLeft: "1vw",
-          marginTop: "0.1vh",
+          marginLeft: "1cqw",
+          marginTop: "0.1cqh",
           fontSize: "0.75rem",
           fontFamily: "var(--tm-font-mono)",
         }}
@@ -158,7 +164,7 @@ export default function Create() {
       </p>
 
       <div className="main">
-        <div className="card" style={{ width: "70vw" }}>
+        <div className="card" style={{ width: "90cqw" }}>
           <h4>Your Lobby</h4>
           {error && (
           <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>
@@ -167,21 +173,21 @@ export default function Create() {
         )}
           <div
             className="list"
-            style={{ paddingBottom: "1vh", maxHeight: "50vh" }}
+            style={{ paddingBottom: "1cqh", maxHeight: "58cqh" }}
           >
             <hr></hr>
-            <p className="annotation">Name:</p>{" "}
+            <p className="annotation" style={{ marginLeft: "4cqw" }}>Name:</p>{" "}
             <input
-              style={{ width: "50vw" }}
+              style={{ width: "78cqw" }}
               type="text"
               placeholder="name"
               value={lobbyName}
               onChange={(e) => setLobbyName(e.target.value)}
             ></input>
             <hr></hr>
-            <p className="annotation">Player count:</p>{" "}
+            <p className="annotation" style={{ marginLeft: "4cqw" }}>Player count:</p>{" "}
             <input
-              style={{ width: "50vw" }}
+              style={{ width: "78cqw" }}
               type="number"
               placeholder="2-8"
               step="1"
@@ -194,66 +200,38 @@ export default function Create() {
             ></input>
             {playerCountError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>{playerCountError}</p>}
             <hr></hr>
-            <p className="annotation">Killer count:</p>{" "}
-            <input
-              style={{ width: "50vw" }}
-              type="number"
-              placeholder="1-2"
-              step="1"
-              value={hunterCount}
-              onChange={(e) => {
-                const value = e.target.value;
-                setHunterCount(value);
-                setHunterCountError(validateCount(value, "Killer count", 1, 2));
-              }}
-            ></input>
-            {hunterCountError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>{hunterCountError}</p>}
-            <hr></hr>
-            <p className="annotation">Map size:</p>
+            <p className="annotation" style={{ marginLeft: "4cqw" }}>Map size:</p>
             <select
-              style={{ width: "50vw" }}
+              style={{ width: "78cqw" }}
               value={mapSize}
               onChange={(e) =>
                 setMapSize(e.target.value as "sm" | "md" | "lg")
               }
             >
-              <option value="lg">Large</option>
-              <option value="md">Medium (Default)</option>
-              <option value="sm">Small</option>
+              <option value="lg">Large (500 m)</option>
+              <option value="md">Medium (300 m, Default)</option>
+              <option value="sm">Small (150 m)</option>
             </select>
-            <hr></hr>
-            <p className="annotation">Clues:</p>
-            <select
-              style={{ width: "50vw" }}
-              value={clueDensity}
-              onChange={(e) =>
-                setClueDensity(e.target.value as "sm" | "md" | "lg")
-              }
-            >
-              <option value="lg">Dense</option>
-              <option value="md">Normal (Default)</option>
-              <option value="sm">Sparse</option>
-            </select>
-            <p className="annotation">Location</p>
-            <p role="status">{locationStatus}</p>
-            <LocationPickerMap value={location} onChange={(coords) => {
-              manuallySelectedLocation.current = true;
+            <p className="annotation" style={{ marginLeft: "4cqw" }}>Location</p>
+            <p role="status" style={{ fontSize: "0.7rem", margin: "0 0 1cqh" }}>{locationStatus}</p>
+            <LocationPickerMap value={location} myLocation={myLocation} radius={ZONE_RADIUS_M[mapSize]} onChange={(coords) => {
+              pinPlaced.current = true;
               setLocation(coords);
               setLocationStatus("Using your selected location.");
             }} />
           </div>
         </div>
-        <div style={{ display: "flex", gap: "10vw" }}>
+        <div style={{ display: "flex", gap: "10cqw" }}>
           <button
             className="create-button"
-            style={{ width: "30vw" }}
+            style={{ width: "30cqw" }}
             onClick={() => navigate("/lobbies")}
           >
             Back
           </button>
           <button
             className="create-button"
-            style={{ width: "30vw" }}
+            style={{ width: "30cqw" }}
             onClick={createLobby}
             disabled={isCreating}
           >

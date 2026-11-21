@@ -11,6 +11,8 @@ import Welcome from './Welcome.tsx'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
+      {/* phone-sized frame: see .app-frame in Style.css */}
+      <div className="app-frame">
       <Routes>
         <Route path="/" element={ <Welcome /> } />
         <Route path="/welcome" element={ <Welcome /> } />
@@ -20,6 +22,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/create" element= {<Create />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </div>
     </BrowserRouter>
   </StrictMode>
 )

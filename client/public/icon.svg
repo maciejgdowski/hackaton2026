@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#09090a"/>
+  <!-- HUD corner brackets -->
+  <path d="M120 150v-30h30M392 150v-30h-30M120 362v30h30M392 362v30h-30" fill="none" stroke="#36363c" stroke-width="8"/>
+  <!-- antenna (same as the towers on the game map) -->
+  <g fill="none" stroke="#f2f2f0" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 236 208 366M256 236l48 130M226 318h60"/>
+    <path d="M214 172a60 60 0 0 0 0 84M298 172a60 60 0 0 1 0 84"/>
+    <path d="M184 146a100 100 0 0 0 0 136M328 146a100 100 0 0 1 0 136" stroke="#767673"/>
+  </g>
+  <circle cx="256" cy="214" r="17" fill="#f2f2f0"/>
+</svg>

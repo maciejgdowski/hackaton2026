@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import MapBackground from "./MapBackground";
-import { getPlaceName } from "./Location";
+import { getPlaceName, getSavedLocation, requestLocation } from "./Location";
 
 interface LobbySummary {
   id: string;
@@ -31,7 +31,19 @@ function App() {
     setIsLoading(true);
     setError("");
 
-    fetch(`${API_URL}/lobbies`)
+    // You only see lobbies whose play area you are standing in.
+    requestLocation()
+      .catch(() => getSavedLocation())
+      .then((location) => {
+        if (!location) throw new Error("Allow location access to see the lobbies around you.");
+        const params = new URLSearchParams({
+          lat: String(location.lat),
+          lng: String(location.lng),
+          accuracy: String(location.accuracy ?? 0),
+          userId: localStorage.getItem("userId") ?? "",
+        });
+        return fetch(`${API_URL}/lobbies?${params}`);
+      })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Could not load lobbies (${response.status}).`);
         return (await response.json()) as LobbySummary[];
@@ -54,12 +66,12 @@ function App() {
   return (
     <>
       <div className="card" style={{ cursor: "pointer" }} onClick={() => navigate("/")}><p>Hello, {userName}!</p></div>
-      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
+      <p style={{ marginLeft: "1cqw", marginTop: "0.1cqh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
 
       <div className="main">
-        <div className="card" style={{ width: "70vw" }}>
+        <div className="card" style={{ width: "70cqw" }}>
           <h4>Lobbies</h4>
-          <div className="list" style={{ paddingBottom: "1vh" }}>
+          <div className="list" style={{ paddingBottom: "1cqh" }}>
             {isLoading && <p>Loading lobbies...</p>}
             {error && (
               <div role="alert">
@@ -72,8 +84,8 @@ function App() {
               <LobbyTile key={lobby.id} {...lobby} />
             ))}
           </div>
-          <hr style={{ marginBottom:"2vh" }}></hr>
-          {!isLoading && !error && <button onClick={() => setRefreshKey((current) => current + 1)}style={{ marginBottom:"3vh" }}>Refresh lobbies</button>}
+          <hr style={{ marginBottom:"2cqh" }}></hr>
+          {!isLoading && !error && <button onClick={() => setRefreshKey((current) => current + 1)}style={{ marginBottom:"3cqh" }}>Refresh lobbies</button>}
         </div>
         <button className="create-button" onClick={() => navigate("/create")}>Create Lobby</button>
       </div>
@@ -97,7 +109,7 @@ function LobbyTile({ id, name, playerCount, maxPlayers }: LobbyTileProps) {
       <hr />
       <div className="element">
         <p>{name} · {playerCount}/{maxPlayers} players</p>
-        <button style={{ height: "5vh" }} disabled={playerCount >= maxPlayers} onClick={() => navigate(`/lobby/${id}`)}>
+        <button style={{ height: "5cqh" }} disabled={playerCount >= maxPlayers} onClick={() => navigate(`/lobby/${id}`)}>
           {playerCount >= maxPlayers ? "Full" : "Join"}
         </button>
       </div>

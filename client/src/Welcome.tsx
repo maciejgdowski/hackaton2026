@@ -58,14 +58,14 @@ export default function Welcome() {
     return (
     <>
       <div className="card"><p>Welcome</p></div>
-      <p style={{ marginLeft:"1vw", marginTop:"0.1vh", fontSize:"0.75rem", fontFamily:"var(--tm-font-mono)"}}>{placeName}</p>
+      <p style={{ marginLeft:"1cqw", marginTop:"0.1cqh", fontSize:"0.75rem", fontFamily:"var(--tm-font-mono)"}}>{placeName}</p>
 
       <div className="main" style={{display:"flex", justifyContent:"center"}}>
-        <div className="list card" style={{ width:"70vw", padding:"0vw 2vw 5vw 2vw"}}>
+        <div className="list card" style={{ width:"70cqw", padding:"0cqw 2cqw 5cqw 2cqw"}}>
             <h4>Set your username:</h4>
             <hr></hr>
             <input
-              style={{marginTop:"1vh"}}
+              style={{marginTop:"1cqh"}}
               type="text"
               placeholder="username"
               value={username}
@@ -74,7 +74,7 @@ export default function Welcome() {
             ></input>
             {error && <p role="alert" style={{ color: "#ff7070", margin: 0 }}>{error}</p>}
         </div>
-        <button style={{ width: "50vw", height: "5vh" }} onClick={enter} disabled={isEntering}>{isEntering ? "Allow mic and location..." : "Enter"}</button>
+        <button style={{ width: "50cqw", height: "5cqh" }} onClick={enter} disabled={isEntering}>{isEntering ? "Allow mic and location..." : "Enter"}</button>
       </div>
       <MapBackground/>
     </>

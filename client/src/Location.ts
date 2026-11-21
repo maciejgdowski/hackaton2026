@@ -7,6 +7,7 @@ const DEFAULT_PLACE = "United States - New York";
 export interface SavedLocation {
   lat: number;
   lng: number;
+  accuracy?: number; // metres, from the GPS
 }
 
 export function getSavedLocation(): SavedLocation | null {
@@ -32,12 +33,16 @@ export function requestLocation(): Promise<SavedLocation> {
     }
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const location = { lat: position.coords.latitude, lng: position.coords.longitude };
+        const location = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        };
         localStorage.setItem("lastLocation", JSON.stringify(location));
         resolve(location);
       },
       (error) => reject(new Error(`Location: ${error.message}`)),
-      { enableHighAccuracy: true, maximumAge: 60_000, timeout: 10_000 }
+      { enableHighAccuracy: true, maximumAge: 15_000, timeout: 10_000 }
     );
   });
 }
