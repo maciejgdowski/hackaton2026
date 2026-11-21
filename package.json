@@ -7,6 +7,11 @@
     "i": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm --prefix ./server install\" \"npm --prefix ./client install\""
   },
   "dependencies": {
-    "concurrently": "^10.0.7"
+    "concurrently": "^10.0.7",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22"
   }
 }
