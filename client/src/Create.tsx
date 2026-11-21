@@ -4,12 +4,35 @@ import "./Style.css";
 import { useNavigate } from "react-router-dom";
 import "./LocationPickerMap";
 import LocationPickerMap, { type Coordinates } from "./LocationPickerMap";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Create() {
   const navigate = useNavigate();
 
   const [location, setLocation] = useState<Coordinates | null>(null);
+  const manuallySelectedLocation = useRef(false);
+  const [locationStatus, setLocationStatus] = useState("Finding your current location...");
+
+  useEffect(() => {
+    let active = true;
+    if (!navigator.geolocation) {
+      setLocationStatus("Location is unavailable. Choose a point on the map.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (!active || manuallySelectedLocation.current) return;
+        setLocation({ lat: coords.latitude, lng: coords.longitude });
+        setLocationStatus("Using your current location. Click the map to choose another point.");
+      },
+      () => {
+        if (!active || manuallySelectedLocation.current) return;
+        setLocationStatus("Could not get your location. Choose a point on the map.");
+      },
+      { enableHighAccuracy: true, maximumAge: 30_000, timeout: 10_000 },
+    );
+    return () => { active = false; };
+  }, []);
   const [lobbyName, setLobbyName] = useState("");
   const [playerCount, setPlayerCount] = useState("2");
   const [hunterCount, setHunterCount] = useState("1");
@@ -130,7 +153,7 @@ export default function Create() {
           fontFamily: "var(--tm-font-mono)",
         }}
       >
-        United States - New York
+        Choose your lobby's starting location
       </p>
 
       <div className="main">
@@ -206,7 +229,12 @@ export default function Create() {
               <option value="sm">Sparse</option>
             </select>
             <p className="annotation">Location</p>
-            <LocationPickerMap value={location} onChange={setLocation} />
+            <p role="status">{locationStatus}</p>
+            <LocationPickerMap value={location} onChange={(coords) => {
+              manuallySelectedLocation.current = true;
+              setLocation(coords);
+              setLocationStatus("Using your selected location.");
+            }} />
           </div>
         </div>
         {error && (

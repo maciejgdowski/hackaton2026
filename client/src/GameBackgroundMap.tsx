@@ -13,17 +13,16 @@ type GameBackgroundMapProps = {
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 const STYLE = "mapbox/dark-v11";
 
-const TILE_URL = `https://api.mapbox.com/styles/v1/${STYLE}/tiles/512/{z}/{x}/{y}@2x.png?access_token=${TOKEN}`;
+const TILE_URL = TOKEN
+  ? `https://api.mapbox.com/styles/v1/${STYLE}/tiles/512/{z}/{x}/{y}@2x.png?access_token=${TOKEN}`
+  : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
 export default function GameBackgroundMap({
   center = [40.7831, -73.9712],
   zoom = 13,
   minZoom = 11,
   maxZoom = 17,
-  maxBounds = [
-    [40.68, -74.06],
-    [40.89, -73.88],
-  ],
+  maxBounds,
   children,
 }: GameBackgroundMapProps) {
   return (
@@ -40,8 +39,8 @@ export default function GameBackgroundMap({
       >
         <TileLayer
           url={TILE_URL}
-          tileSize={512}
-          zoomOffset={-1}
+          tileSize={TOKEN ? 512 : 256}
+          zoomOffset={TOKEN ? -1 : 0}
           attribution='&copy; <a href="https://www.mapbox.com/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
         {children}
