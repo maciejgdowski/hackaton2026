@@ -5,6 +5,10 @@ import { env } from "./env.ts";
 import { WebSocket, WebSocketServer } from "ws";
 import http, { IncomingMessage } from 'http';
 import { Duplex } from "stream";
+import {
+  checkEnd, createGame, GameError, kill, removePlayer, serializeGame, updateLocation,
+  type GameState, type Phase,
+} from "./game.ts";
 
 const allowedOrigins = (env.WEB_ORIGIN ?? "http://localhost:3000")
   .split(",")
@@ -48,6 +52,8 @@ interface LobbyState {
   name: string;
   props: LobbyProps;
   members: Map<string, string>; // UUID -> username
+  phase: Phase;
+  game: GameState | null; // the current / last round
 }
 
 interface GameWebSocket extends WebSocket {
@@ -58,9 +64,33 @@ interface GameWebSocket extends WebSocket {
 
 const lobbies = new Map<string, LobbyState>();
 const lobbySockets = new Map<string, Set<WebSocket>>();
+const gameSockets = new Map<string, Set<GameWebSocket>>();
 
+// Never send `game` here: it holds everyone's role and position.
 function serializeLobby(lobbyId: string, lobby: LobbyState) {
-  return { ...lobby, id: lobbyId, members: Object.fromEntries(lobby.members) };
+  const { game: _game, ...rest } = lobby;
+  return { ...rest, id: lobbyId, members: Object.fromEntries(lobby.members) };
+}
+
+// Every player gets their own view (role, sonar, clues), so each socket gets its own message.
+function broadcastGameUpdate(lobbyId: string) {
+  const lobby = lobbies.get(lobbyId);
+  for (const socket of gameSockets.get(lobbyId) ?? []) {
+    if (socket.readyState !== WebSocket.OPEN) continue;
+    const game = lobby?.game && socket.userId
+      ? serializeGame(lobby.game, socket.userId, lobby.props.clues)
+      : null;
+    socket.send(JSON.stringify(game ? { type: "game:update", game } : { type: "game:closed", gameId: lobbyId }));
+  }
+}
+
+function sendError(res: Response, error: unknown) {
+  if (error instanceof GameError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+  console.error(error);
+  res.status(500).json({ error: "Something went wrong." });
 }
 
 function broadcastLobbyUpdate(lobbyId: string) {
@@ -118,6 +148,8 @@ app.post("/lobby/create", (req: Request, res: Response) => {
     name: lobbyName,
     props: { radius, center, players, hunters, clues },
     members: new Map([[userId, lobbyName]]),
+    phase: "lobby",
+    game: null,
   };
   lobbies.set(lobbyId, lobbyState);
   console.log(`Lobby created: ${lobbyId}`, lobbyState);
@@ -166,6 +198,24 @@ server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) =>
 
 wss.on("connection", (socket) => {
   const client = socket as GameWebSocket;
+
+  if (client.gameId) {
+    const gameId = client.gameId;
+    const sockets = gameSockets.get(gameId) ?? new Set<GameWebSocket>();
+    sockets.add(client);
+    gameSockets.set(gameId, sockets);
+
+    const lobby = lobbies.get(gameId);
+    const game = lobby?.game && client.userId ? serializeGame(lobby.game, client.userId, lobby.props.clues) : null;
+    if (game) socket.send(JSON.stringify({ type: "game:update", game }));
+
+    socket.on("close", () => {
+      sockets.delete(client);
+      if (sockets.size === 0) gameSockets.delete(gameId);
+    });
+    return;
+  }
+
   if (!client.lobbyId) return;
 
   const sockets = lobbySockets.get(client.lobbyId) ?? new Set<WebSocket>();
@@ -228,7 +278,9 @@ app.delete("/lobby/:lobbyId", (req: Request, res: Response) => {
 
   lobbies.delete(lobbyId);
   broadcastLobbyUpdate(lobbyId);
+  broadcastGameUpdate(lobbyId);
   for (const socket of lobbySockets.get(lobbyId) ?? []) socket.close(1000, "Lobby disbanded");
+  for (const socket of gameSockets.get(lobbyId) ?? []) socket.close(1000, "Lobby disbanded");
   res.status(204).end();
 });
 
@@ -243,6 +295,10 @@ app.post("/lobby/:lobbyId/join", (req: Request, res: Response) => {
   }
   if (!userId) {
     res.status(401).json({ error: "A valid userId is required" });
+    return;
+  }
+  if (!lobby.members.has(userId) && lobby.phase !== "lobby") {
+    res.status(409).json({ error: "This game has already started." });
     return;
   }
   if (!lobby.members.has(userId) && lobby.members.size >= lobby.props.players) {
@@ -276,10 +332,156 @@ app.delete("/lobby/:lobbyId/leave", (req: Request, res: Response) => {
   }
 
   lobby.members.delete(userId);
+  if (lobby.game) {
+    removePlayer(lobby.game, userId);
+    if (lobby.game.result) lobby.phase = "ended";
+  }
   if (lobby.members.size === 0) lobbies.delete(lobbyId);
   broadcastLobbyUpdate(lobbyId);
+  broadcastGameUpdate(lobbyId);
   res.status(204).end();
 });
+
+// ---------- game ----------
+// The lobby ID is also the game ID: /game/:gameId and the WebSocket at /game/:gameId?userId=...
+
+// Admin starts the round: picks hunters, gives every player a sonar slot,
+// and tells the lobby page to move to /game/:gameId.
+app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
+  const lobbyId = req.params.lobbyId as string;
+  const lobby = lobbies.get(lobbyId);
+  const userId = authenticateUser(req);
+
+  if (!lobby) {
+    res.status(404).json({ error: "Lobby not found" });
+    return;
+  }
+  const adminId = lobby.members.keys().next().value;
+  if (!userId || userId !== adminId) {
+    res.status(403).json({ error: "Only the lobby admin can start the game." });
+    return;
+  }
+  if (lobby.phase === "playing") {
+    res.status(409).json({ error: "The game has already started." });
+    return;
+  }
+
+  try {
+    lobby.game = createGame(lobby.members, lobby.props);
+  } catch (error) {
+    sendError(res, error);
+    return;
+  }
+  lobby.phase = "playing";
+  console.log(`Game started: ${lobbyId}`);
+
+  const message = JSON.stringify({ type: "game:start", gameId: lobbyId });
+  for (const socket of lobbySockets.get(lobbyId) ?? []) {
+    if (socket.readyState === WebSocket.OPEN) socket.send(message);
+  }
+  broadcastLobbyUpdate(lobbyId);
+  broadcastGameUpdate(lobbyId);
+  res.json({ gameId: lobbyId });
+});
+
+// After a round ends the admin reopens the lobby for the next one.
+app.post("/lobby/:lobbyId/reset", (req: Request, res: Response) => {
+  const lobbyId = req.params.lobbyId as string;
+  const lobby = lobbies.get(lobbyId);
+  const userId = authenticateUser(req);
+
+  if (!lobby) {
+    res.status(404).json({ error: "Lobby not found" });
+    return;
+  }
+  const adminId = lobby.members.keys().next().value;
+  if (!userId || userId !== adminId) {
+    res.status(403).json({ error: "Only the lobby admin can reset the game." });
+    return;
+  }
+  if (lobby.phase !== "ended") {
+    res.status(409).json({ error: "The game is still running." });
+    return;
+  }
+
+  lobby.phase = "lobby";
+  lobby.game = null;
+  broadcastLobbyUpdate(lobbyId);
+  broadcastGameUpdate(lobbyId);
+  res.status(204).end();
+});
+
+// This player's view of the game (same payload as the "game:update" socket message).
+app.get("/game/:gameId", (req: Request, res: Response) => {
+  const gameId = req.params.gameId as string;
+  const lobby = lobbies.get(gameId);
+  const userId = authenticateUser(req);
+
+  if (!lobby?.game) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  const game = userId ? serializeGame(lobby.game, userId, lobby.props.clues) : null;
+  if (!game) {
+    res.status(403).json({ error: "You are not in this game." });
+    return;
+  }
+  res.json(game);
+});
+
+// Body: { lat, lng, accuracy } from navigator.geolocation (accuracy in metres).
+app.post("/game/:gameId/location", (req: Request, res: Response) => {
+  const gameId = req.params.gameId as string;
+  const lobby = lobbies.get(gameId);
+  const userId = authenticateUser(req);
+
+  if (!lobby?.game) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  try {
+    updateLocation(lobby.game, userId ?? "", req.body);
+  } catch (error) {
+    sendError(res, error);
+    return;
+  }
+  res.status(204).end();
+});
+
+// Body: { targetId }. The hunter's phone only offers this once the sonar says the target is within ~2 m.
+app.post("/game/:gameId/kill", (req: Request, res: Response) => {
+  const gameId = req.params.gameId as string;
+  const lobby = lobbies.get(gameId);
+  const userId = authenticateUser(req);
+
+  if (!lobby?.game) {
+    res.status(404).json({ error: "Game not found" });
+    return;
+  }
+  try {
+    kill(lobby.game, userId ?? "", req.body?.targetId);
+  } catch (error) {
+    sendError(res, error);
+    return;
+  }
+  if (lobby.game.result) lobby.phase = "ended";
+  broadcastLobbyUpdate(gameId);
+  broadcastGameUpdate(gameId);
+  res.status(204).end();
+});
+
+// Once a second: end rounds whose timer ran out and push fresh views
+// (sonar on/off follows GPS, clues refresh, countdown stays in sync).
+setInterval(() => {
+  for (const [lobbyId, lobby] of lobbies) {
+    if (lobby.phase !== "playing" || !lobby.game) continue;
+    if (checkEnd(lobby.game)) {
+      lobby.phase = "ended";
+      broadcastLobbyUpdate(lobbyId);
+    }
+    broadcastGameUpdate(lobbyId);
+  }
+}, 1000);
 
 server.listen(env.PORT, () => {
   console.log(`Backend API listening on port ${env.PORT}`);
