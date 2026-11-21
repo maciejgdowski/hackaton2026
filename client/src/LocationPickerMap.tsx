@@ -12,7 +12,6 @@ type LocationPickerMapProps = {
   onChange: (coords: Coordinates) => void;
   defaultCenter?: Coordinates;
   zoom?: number;
-  height?: string;
 };
 
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
@@ -42,7 +41,7 @@ function ClickHandler({ onSelect }: { onSelect: (coords: Coordinates) => void })
   return null;
 }
 
-export default function LocationPickerMap({value, onChange, defaultCenter = { lat: 40.7831, lng: -73.9712 }, zoom = 12, height = "320px"}: LocationPickerMapProps) {
+export default function LocationPickerMap({value, onChange, defaultCenter = { lat: 40.7831, lng: -73.9712 }, zoom = 12}: LocationPickerMapProps) {
   const center = value ?? defaultCenter;
 
   return (
