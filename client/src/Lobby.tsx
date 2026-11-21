@@ -188,7 +188,6 @@ export default function Lobby() {
   }
 }
 
-
   const members = Object.entries(lobbyData?.members ?? {});
   const isAdmin = members.length > 0 && members[0][0] === userId;
 
@@ -215,19 +214,19 @@ export default function Lobby() {
               <PlayerTile key={id} id={id} name={name} role={index === 0 ? "admin" : "user"} />
             ))}
           </div>
+          </div>
           {!isLoading && !error && (isAdmin ? (
-            <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
-              <button onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
-              {startError && <p role="alert">{startError}</p>}
-              <button onClick={disbandLobby}>Disband / Abandon lobby</button>
+            <div style={{ display: "flex", gap: "10vw" }}>
+              <button style={{ width:"30vw", height:"10vh" }} onClick={disbandLobby}>Disband lobby</button>
+              <button style={{ width:"30vw", height:"10vh" }} onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
             </div>
           ) : (
-            <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
-              <button type="button" disabled aria-live="polite">Waiting on host...</button>
-              <button onClick={quitGame}>Quit game</button>
+            <div style={{ display: "flex",  gap: "10vw" }}>
+              <button style={{ width:"30vw", height:"10vh" }} onClick={quitGame}>Quit lobby</button>
+              <button style={{ width:"30vw", height:"10vh" }} type="button" disabled aria-live="polite">Waiting on host...</button>
             </div>
           ))}
-        </div>
+          {startError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize: "0.75rem" }}>{startError}</p>}
       </div>
       <MapBackground />
     </>

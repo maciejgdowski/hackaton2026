@@ -160,6 +160,11 @@ export default function Create() {
       <div className="main">
         <div className="card" style={{ width: "70vw" }}>
           <h4>Your Lobby</h4>
+          {error && (
+          <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>
+            {error}
+          </p>
+        )}
           <div
             className="list"
             style={{ paddingBottom: "1vh", maxHeight: "50vh" }}
@@ -187,7 +192,7 @@ export default function Create() {
                 setPlayerCountError(validateCount(value, "Player count", 2, 8));
               }}
             ></input>
-            {playerCountError && <p role="alert" style={{ color: "#ff7070", margin: 0 }}>{playerCountError}</p>}
+            {playerCountError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>{playerCountError}</p>}
             <hr></hr>
             <p className="annotation">Killer count:</p>{" "}
             <input
@@ -202,7 +207,7 @@ export default function Create() {
                 setHunterCountError(validateCount(value, "Killer count", 1, 2));
               }}
             ></input>
-            {hunterCountError && <p role="alert" style={{ color: "#ff7070", margin: 0 }}>{hunterCountError}</p>}
+            {hunterCountError && <p role="alert" style={{ color: "#ff7070", margin: "0", padding: "0", fontSize:"0.75rem" }}>{hunterCountError}</p>}
             <hr></hr>
             <p className="annotation">Map size:</p>
             <select
@@ -238,11 +243,6 @@ export default function Create() {
             }} />
           </div>
         </div>
-        {error && (
-          <p role="alert" style={{ color: "#ff7070", margin: 0 }}>
-            {error}
-          </p>
-        )}
         <div style={{ display: "flex", gap: "10vw" }}>
           <button
             className="create-button"

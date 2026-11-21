@@ -72,7 +72,8 @@ function App() {
               <LobbyTile key={lobby.id} {...lobby} />
             ))}
           </div>
-          {!isLoading && !error && <button onClick={() => setRefreshKey((current) => current + 1)}>Refresh lobbies</button>}
+          <hr style={{ marginBottom:"2vh" }}></hr>
+          {!isLoading && !error && <button onClick={() => setRefreshKey((current) => current + 1)}style={{ marginBottom:"3vh" }}>Refresh lobbies</button>}
         </div>
         <button className="create-button" onClick={() => navigate("/create")}>Create Lobby</button>
       </div>
