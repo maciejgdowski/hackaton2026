@@ -1,14 +1,23 @@
-import "./Style.css";
-import { useParams } from "react-router-dom";
+import GameBackgroundMap from "./GameBackgroundMap";
 
-export default function Game() {
-
-    const params = useParams();
-
+export default function GamePage() {
   return (
-    <div>
-      <h1>Game Page</h1>
-      <p>This is the game id: {params.gameId}</p>
-    </div>
+    <>
+      <GameBackgroundMap>
+        {/* You can pass game markers, circles, or polygons directly inside */}
+      </GameBackgroundMap>
+
+      <div className="game-hud-overlay">
+        {/* Top bar */}
+        <div className="game-bar">
+          <div className="card" style={{ height:"7vh", width:"90vw", display:"flex", justifyContent:"center", alignItems:"center"}}><p>Clues: 6/9</p></div>
+        </div>
+
+        {/* Bottom controls */}
+        <div className="game-bar">
+          <div className="card" style={{ height:"12vh", width:"70vw", display:"flex", justifyContent:"center", alignItems:"center"}}><h3>Action</h3 ></div>
+        </div>
+      </div>
+    </>
   );
 }
