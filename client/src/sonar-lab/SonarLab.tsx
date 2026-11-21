@@ -88,7 +88,7 @@ function Header() {
   const audio = lab.audioDesc;
   return (
     <div className="panel">
-      <div className="big"><Dot slot={lab.mySlot} /> {slotName(lab.mySlot)} · {lab.slotFreqs(lab.mySlot).join(' / ')} Hz</div>
+      <div className="big"><Dot slot={lab.mySlot} /> {slotName(lab.mySlot)} · {lab.slotFreqs(lab.mySlot).join(' / ')} Hz · ID {lab.myId}</div>
       <div className="kv" style={{ marginTop: 6 }}>
         <Kv k="Emit"><span>{lab.emitDesc}</span></Kv>
         <Kv k="Audio"><span style={{ color: audio.ok ? undefined : 'var(--bad)' }}>{audio.text}</span></Kv>

@@ -10,6 +10,7 @@ import { EndScreen } from './screens/EndScreen.tsx';
 import { GameScreen } from './screens/GameScreen.tsx';
 import { JoinScreen } from './screens/JoinScreen.tsx';
 import { LobbyScreen } from './screens/LobbyScreen.tsx';
+import { SonarLabPage } from './sonar-lab/SonarLab.tsx';
 
 type Screen = 'join' | 'lobby' | 'game' | 'end';
 
@@ -31,16 +32,7 @@ export function App() {
 
   return (
     <>
-      <WorldMap mode={screen === 'game' ? 'game' : screen === 'lobby' ? 'lobby' : 'menu'} fix={fix} inSession={inSession} />
-
-      {screen === 'join' && <JoinScreen onJoined={game.joined} />}
-      {screen === 'lobby' && view && <LobbyScreen view={view} onReady={game.getReady} onStart={game.start} onLeave={game.leave} />}
-      {screen === 'game' && view && <GameScreen view={view} onKill={game.kill} onQuit={game.quit} />}
-      {screen === 'end' && view && <EndScreen view={view} onReset={game.reset} />}
-
-      {playing && !alive && !spectating && <DeadOverlay onWatch={() => setSpectating(true)} onQuit={game.quit} />}
-      {playing && alive && !Sonar.ready && <ReconnectOverlay onTap={game.getReady} />}
-      <ErrorToast />
+      <SonarLabPage/>
     </>
   );
 }

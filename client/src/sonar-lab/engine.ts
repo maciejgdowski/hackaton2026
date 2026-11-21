@@ -1,3 +1,5 @@
+import { DataRx, PAYLOAD_BYTES, scheduleFrame } from './modem.ts';
+
 // Sonar lab: standalone ultrasonic proximity test (served at /sonar/).
 // Audio, DSP, kill mechanic and calibration logger. The React page subscribes to changes
 // (version counter, bumped on every 100 ms tick and every action) and reads the fields directly.
@@ -66,12 +68,25 @@ function setSessionType(v: string) { const a = audioSession(); if (a && v !== 'a
 // shows SIGNAL LOST. The killer sees the victim's signal vanish.
 const KILL_TX_MS = 2000, KILL_HEAR_DB = 15, KILL_HEAR_TICKS = 4, CONFIRM_MS = 6000;
 
+// Touch ID swap: when another phone is heard at ≥ TOUCH_DB (only when held speaker-to-mic), the lower
+// slot sends its ID over the data link (modem.ts) and the other phone replies with its own.
+// Frames are only accepted while the sender is that loud.
+const TOUCH_DB = 35, TOUCH_OUT_DB = 30;   // touching: enter ≥ 35 dB, leave < 30 dB (1 s average)
+const TOUCH_GATE_MS = 2000;               // accept a frame if the sender was touching this recently
+const RETRY_MS = 4000, MAX_TRIES = 3;     // lower slot resends its ID until the reply arrives
+const REPLY_DELAY_MS = 500;               // let the sender stop listening to itself first
+const MUTE_TAIL_MS = 400;                 // own frame still reaching our own mic (output + input latency)
+const DATA_VOL = 0.35;
+const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const newId = () => [...Array(PAYLOAD_BYTES - 1)].map(() => ID_CHARS[Math.random() * ID_CHARS.length | 0]).join('');
+
 export class SonarLab {
   S: Settings = { ...DEFAULTS, ...store.get<Partial<Settings>>('settings5', {}) };
   mySlot = this.clampSlot(store.get('slot', 0));
   srcSlot = this.clampSlot(store.get('src', 1));
   dist = store.get('dist', 2);
   cond = store.get('cond', CONDS[0]);
+  myId: string = (id => typeof id === 'string' && id.length === PAYLOAD_BYTES - 1 ? id : newId())(store.get('id', ''));
   rows: Row[] = (r => Array.isArray(r) ? r : [])(store.get<Row[]>('rows', []));
 
   started = false;
@@ -94,6 +109,18 @@ export class SonarLab {
   private killTx: number | null = null;
   private killHeard = 0;
   private pending: { v: number; t: number } | null = null;
+
+  // touch ID swap
+  peers: (string | null)[] = Array(MAXS).fill(null);   // last ID received from each slot
+  private touching: boolean[] = Array(MAXS).fill(false);
+  private lastTouch: number[] = Array(MAXS).fill(-1e9);
+  private gotFrom: boolean[] = Array(MAXS).fill(false);
+  private tries: number[] = Array(MAXS).fill(0);
+  private nextTry: number[] = Array(MAXS).fill(0);
+  private rx: DataRx | null = null;
+  private dataOsc: OscillatorNode | null = null;
+  private dataGain: GainNode | null = null;
+  private txEnd = 0;                                    // performance.now() when our current frame ends
 
   // logger
   rec: (Buf & { end: number }) | null = null;
@@ -124,7 +151,7 @@ export class SonarLab {
   getVersion = () => this.version;
   private changed() { this.version++; this.listeners.forEach(f => f()); }
 
-  constructor() { this.resetHist(); }
+  constructor() { this.resetHist(); store.set('id', this.myId); }
 
   // ---------- frequencies ----------
   // Slot s, tone t. Tones are interleaved (t*slots + s) so one phone's tones are slots*spacing
@@ -201,6 +228,43 @@ export class SonarLab {
   }
   respawn() { this.dead = false; this.killHeard = 0; this.emitting = true; this.applyEmit(); }
 
+  // ---------- touch ID swap ----------
+  private updateTouch(s: number, now: number) {
+    if (s === this.mySlot) return;
+    const v = this.avg1[s], was = this.touching[s];
+    this.touching[s] = Number.isFinite(v) && (was ? v >= TOUCH_OUT_DB : v >= TOUCH_DB);
+    if (!this.touching[s]) return;
+    this.lastTouch[s] = now;
+    if (!was) { this.gotFrom[s] = false; this.tries[s] = 0; this.nextTry[s] = now; }
+    if (this.mySlot < s && !this.gotFrom[s] && this.tries[s] < MAX_TRIES && now >= this.nextTry[s] && this.sendId()) {
+      this.tries[s]++; this.nextTry[s] = now + RETRY_MS;
+    }
+  }
+  private sendId() {
+    const ctx = this.ctx;
+    if (!ctx || performance.now() < this.txEnd) return false;
+    if (!this.dataOsc || !this.dataGain) {
+      this.dataOsc = ctx.createOscillator(); this.dataOsc.type = 'sine';
+      this.dataGain = ctx.createGain(); this.dataGain.gain.value = 0;
+      this.dataOsc.connect(this.dataGain); this.dataGain.connect(ctx.destination); this.dataOsc.start();
+    }
+    const payload = [this.mySlot, ...[...this.myId].map(c => c.charCodeAt(0))];
+    const end = scheduleFrame(ctx, this.dataOsc, this.dataGain, this.S.base, payload, DATA_VOL);
+    this.txEnd = performance.now() + (end - ctx.currentTime) * 1000;
+    if (this.rx) this.rx.muteUntil = this.txEnd + MUTE_TAIL_MS;
+    return true;
+  }
+  private onFrame([slot, ...chars]: number[]) {
+    const id = String.fromCharCode(...chars), now = performance.now();
+    if (slot >= this.S.slots || slot === this.mySlot || ![...id].every(c => ID_CHARS.includes(c))) return;
+    if (now - this.lastTouch[slot] > TOUCH_GATE_MS) return;            // not held together: ignore
+    const isNew = this.peers[slot] !== id || !this.gotFrom[slot];
+    this.peers[slot] = id; this.gotFrom[slot] = true;
+    if (isNew) { this.killMsg = `📲 ${slotName(slot)} ID: ${id}`; navigator.vibrate?.(60); }
+    if (this.mySlot > slot) window.setTimeout(() => this.sendId(), REPLY_DELAY_MS);   // reply with ours
+    this.changed();
+  }
+
   // ---------- pickers ----------
   setMySlot(i: number) { this.mySlot = i; store.set('slot', i); this.restartHop(); this.changed(); }
   setSrcSlot(i: number) { this.srcSlot = i; store.set('src', i); this.changed(); }
@@ -231,6 +295,7 @@ export class SonarLab {
       this.analyser = ctx.createAnalyser();
       src.connect(this.analyser);
       this.applyAnalyser();
+      this.rx = new DataRx(ctx, src, () => this.S.base, p => this.onFrame(p));
 
       // Emitter: sine osc runs forever; gain is ramped for on/off, frequency glides for hops.
       this.osc = ctx.createOscillator(); this.osc.type = 'sine'; this.osc.frequency.value = this.toneFreq(this.mySlot, 0);
@@ -376,6 +441,7 @@ export class SonarLab {
       for (const p of h) if (Number.isFinite(p.v)) { sum += p.v; c++; }
       this.avg1[s] = c ? sum / c : NaN;
       this.updateRange(s);
+      this.updateTouch(s, now);
       if (this.rec) this.pushBuf(this.rec, s, best, bt);
       if (this.ivl) this.pushBuf(this.ivl, s, best, bt);
     }
