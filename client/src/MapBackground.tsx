@@ -40,15 +40,8 @@ function onOrientation(event: DeviceOrientationEvent) {
 
 window.addEventListener("deviceorientation", onOrientation);
 
-// iPhone: the tilt sensor needs permission, which can only be asked from a tap.
-// The first tap anywhere in the app asks once (usually the Enter button on the welcome page).
-type OrientationWithPermission = typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
-function askTiltPermission() {
-  document.removeEventListener("click", askTiltPermission, true);
-  const orientation = window.DeviceOrientationEvent as OrientationWithPermission | undefined;
-  orientation?.requestPermission?.().catch(() => {});
-}
-document.addEventListener("click", askTiltPermission, true); // "click": Safari only allows asking on a finished tap
+// iPhone: the tilt sensor needs permission. It's asked by the Motion button in the permissions panel
+// (Permissions.ts), not on the first tap, so it doesn't fight with the mic and location prompts.
 
 export default function MapBackground() {
   const imageRef = useRef<HTMLImageElement | null>(null);

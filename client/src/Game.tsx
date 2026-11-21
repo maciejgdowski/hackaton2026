@@ -1,4 +1,5 @@
 import "./Style.css";
+import { askMotionAgainIfAllowedBefore } from "./Permissions";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import L from "leaflet";
@@ -287,6 +288,7 @@ export default function GamePage() {
   }, []);
 
   async function enableSound() {
+    askMotionAgainIfAllowedBefore(); // after a reload the compass needs the tap too (no prompt if allowed before)
     try {
       await startSonar();
       setSoundOn(true);

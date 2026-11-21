@@ -832,3 +832,33 @@ select {
 .guide p {
   font-size: 0.8rem;
 }
+/* ---------- Permissions (welcome page) ---------- */
+.permissions-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.7rem;
+  font-family: var(--tm-font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.permission-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background-color: #ff7070;
+  flex-shrink: 0;
+}
+
+.permission-dot.on {
+  background-color: #34d399;
+}
+
+.permission-help {
+  margin: 0 0 1cqh;
+  text-align: left;
+  font-size: 0.7rem;
+  color: #ff7070;
+}
