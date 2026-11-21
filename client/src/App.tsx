@@ -1,96 +1,101 @@
-import { useEffect, useState } from "react";
-import { io } from "socket.io-client";
 import "./Style.css";
-import { Router, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 
-import "./MapBackground";
-
-import { MapContainer, TileLayer } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
 import MapBackground from "./MapBackground";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
-
-type SocketStatus = "connecting" | "connected" | "disconnected" | "error";
+interface LobbySummary {
+  id: string;
+  name: string;
+  playerCount: number;
+  maxPlayers: number;
+}
 
 function App() {
-  const [message, setMessage] = useState("");
-  const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
-  const [connectedCount, setConnectedCount] = useState(0);
-
   const userName = "daw123";
-
   const navigate = useNavigate();
+  const [lobbies, setLobbies] = useState<LobbySummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
   useEffect(() => {
-    const socket = io(API_URL, {
-      autoConnect: false,
-      withCredentials: true,
-    });
+    let isCurrent = true;
+    setIsLoading(true);
+    setError("");
 
-    socket.on("connect", () => setSocketStatus("connected"));
-    socket.on("disconnect", () => setSocketStatus("disconnected"));
-
-    socket.on("socketCount", (count: number) => {
-      setConnectedCount(count);
-    });
-    socket.on("connect_error", (error) => {
-      console.error("Socket connection error:", error);
-      setSocketStatus("error");
-    });
-    socket.connect();
-
-    const fetchMessage = async () => {
-      await fetch(`${API_URL}/health`)
-        .then((res) => res.json())
-        .then((data) => setMessage(data.message))
-        .catch((err) => console.error("Error: ", err));
-    };
-
-    fetchMessage();
+    fetch(`${API_URL}/lobbies`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Could not load lobbies (${response.status}).`);
+        return (await response.json()) as LobbySummary[];
+      })
+      .then((data) => {
+        if (isCurrent) setLobbies(data);
+      })
+      .catch((requestError: unknown) => {
+        if (isCurrent) setError(requestError instanceof Error ? requestError.message : "Could not load lobbies.");
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoading(false);
+      });
 
     return () => {
-      socket.disconnect();
+      isCurrent = false;
     };
-  }, []);
+  }, [API_URL, refreshKey]);
 
   return (
     <>
       <div className="card"><p>Hello, {userName}!</p></div>
-      <p style={{ marginLeft:"1vw", marginTop:"0.1vh", fontSize:"0.75rem", fontFamily:"var(--tm-font-mono)"}}>United States - New York</p>
+      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>United States - New York</p>
 
       <div className="main">
-        <div className="card" style={{ width:"70vw"}}>
+        <div className="card" style={{ width: "70vw" }}>
           <h4>Lobbies</h4>
           <div className="list" style={{ paddingBottom: "1vh" }}>
-            <LobbyTile title="Lobby 1" id="0"/>
-            <LobbyTile title="Lobby 2" id="1"/>
-            <LobbyTile title="Lobby 3" id="2"/>
-            <LobbyTile title="Lobby 4" id="3"/>
-            <LobbyTile title="Lobby 5" id="4"/>
+            {isLoading && <p>Loading lobbies...</p>}
+            {error && (
+              <div role="alert">
+                <p>{error}</p>
+                <button onClick={() => setRefreshKey((current) => current + 1)}>Retry</button>
+              </div>
+            )}
+            {!isLoading && !error && lobbies.length === 0 && <p>No open lobbies yet.</p>}
+            {!isLoading && !error && lobbies.map((lobby) => (
+              <LobbyTile key={lobby.id} {...lobby} />
+            ))}
           </div>
+          {!isLoading && !error && <button onClick={() => setRefreshKey((current) => current + 1)}>Refresh lobbies</button>}
         </div>
         <button className="create-button" onClick={() => navigate("/create")}>Create Lobby</button>
       </div>
-      <MapBackground/>
+      <MapBackground />
     </>
   );
 }
 
 interface LobbyTileProps {
-  title: string
-  id: string
+  id: string;
+  name: string;
+  playerCount: number;
+  maxPlayers: number;
 }
 
-function LobbyTile(props : LobbyTileProps ) {
+function LobbyTile({ id, name, playerCount, maxPlayers }: LobbyTileProps) {
   const navigate = useNavigate();
 
   return (
     <>
-      <hr></hr>
-      <div className="element"><p>{props.title}</p><button style={{ height: "5vh" }} onClick={() => navigate(`/lobby/${props.id}`)}>Join</button></div>
+      <hr />
+      <div className="element">
+        <p>{name} · {playerCount}/{maxPlayers} players</p>
+        <button style={{ height: "5vh" }} disabled={playerCount >= maxPlayers} onClick={() => navigate(`/lobby/${id}`)}>
+          {playerCount >= maxPlayers ? "Full" : "Join"}
+        </button>
+      </div>
     </>
-  )
+  );
 }
 
 export default App;
