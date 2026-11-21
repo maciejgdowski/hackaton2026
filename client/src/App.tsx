@@ -21,6 +21,8 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+  const [showGuide, setShowGuide] = useState(false);
+
   // no username yet -> set one first
   useEffect(() => {
     if (!userName) navigate("/");
@@ -67,6 +69,28 @@ function App() {
     <>
       <div className="card" style={{ cursor: "pointer" }} onClick={() => navigate("/")}><p>Hello, {userName}!</p></div>
       <p style={{ marginLeft: "1cqw", marginTop: "0.1cqh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
+      <button style={{width:"10vw", height:"10vw", display:"flex", justifyContent:"center", alignItems:"center"}} onClick={() => setShowGuide(!showGuide)}>?</button>
+
+      { showGuide && (
+      <div className="card guide">
+        <button onClick={() => setShowGuide(!showGuide)} style={{position:"absolute", right: "1vw", top:"0.5vh"}}>x</button>
+        <h4>Warning</h4>
+        <p>This site will emmit high frequency audio, if you are extra sensitive, pregnant or have heart problems</p>
+
+        <hr></hr>
+
+        <h4>If not working</h4>
+        <p>If your phone is not detected/detecting killing or sharing try:
+          1. turing up your volume
+          2. turning off silent mode
+          3. disconetcing headphones
+        </p>
+
+        <hr></hr>
+
+        <p>map from <a href="https://www.mapbox.com/">MapBox</a> and <a href="https://www.openstreetmap.org/#map=7/52.018/19.137">OpenStreetMaps</a></p>
+      </div>
+      )}
 
       <div className="main">
         <div className="card" style={{ width: "70cqw" }}>
