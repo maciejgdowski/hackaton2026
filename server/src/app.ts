@@ -6,8 +6,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import http, { IncomingMessage } from 'http';
 import { Duplex } from "stream";
 import {
-  checkEnd, createGame, GameError, removePlayer, scan, serializeGame, updateLocation,
-  type GameState, type Phase,
+  checkEnd, createGame, removePlayer, scan, serializeGame, updateLocation,
+  GameError, type GameState, type Status,
 } from "./game.ts";
 
 const allowedOrigins = (env.WEB_ORIGIN ?? "http://localhost:3000")
@@ -52,7 +52,7 @@ interface LobbyState {
   name: string;
   props: LobbyProps;
   members: Map<string, string>; // UUID -> username
-  phase: Phase;
+  status: Status;
   game: GameState | null; // the current / last round
 }
 
@@ -66,20 +66,35 @@ const lobbies = new Map<string, LobbyState>();
 const lobbySockets = new Map<string, Set<WebSocket>>();
 const gameSockets = new Map<string, Set<GameWebSocket>>();
 
+// What a phone sends once a second: { type: "player:location", location: {...} }
+interface PlayerLocation {
+  lat: number;
+  lng: number;
+  accuracy: number;
+  timestamp: number;
+}
+
+function isLocation(value: unknown): value is PlayerLocation {
+  if (!value || typeof value !== "object") return false;
+  const p = value as PlayerLocation;
+  return Number.isFinite(p.lat) && Math.abs(p.lat) <= 90 &&
+    Number.isFinite(p.lng) && Math.abs(p.lng) <= 180 &&
+    Number.isFinite(p.accuracy) && p.accuracy >= 0 &&
+    Number.isFinite(p.timestamp) && p.timestamp > 0;
+}
+
 // Never send `game` here: it holds everyone's role and position.
 function serializeLobby(lobbyId: string, lobby: LobbyState) {
   const { game: _game, ...rest } = lobby;
   return { ...rest, id: lobbyId, members: Object.fromEntries(lobby.members) };
 }
 
-// Every player gets their own view (role, sonar, clues), so each socket gets its own message.
+// Every player gets their own view (role, sonar, map), so each socket gets its own message.
 function broadcastGameUpdate(lobbyId: string) {
   const lobby = lobbies.get(lobbyId);
   for (const socket of gameSockets.get(lobbyId) ?? []) {
     if (socket.readyState !== WebSocket.OPEN) continue;
-    const game = lobby?.game && socket.userId
-      ? serializeGame(lobby.game, socket.userId, lobby.props.clues)
-      : null;
+    const game = lobby?.game && socket.userId ? serializeGame(lobby.game, socket.userId) : null;
     socket.send(JSON.stringify(game ? { type: "game:update", game } : { type: "game:closed", gameId: lobbyId }));
   }
 }
@@ -149,7 +164,7 @@ app.post("/lobby/create", (req: Request, res: Response) => {
     name: lobbyName,
     props: { radius, center, players, hunters, clues },
     members: new Map([[userId, playerName]]),
-    phase: "lobby",
+    status: "waiting",
     game: null,
   };
   lobbies.set(lobbyId, lobbyState);
@@ -199,21 +214,38 @@ server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) =>
 
 wss.on("connection", (socket) => {
   const client = socket as GameWebSocket;
-
-  if (client.gameId) {
+  if (client.gameId && client.userId) {
     const gameId = client.gameId;
+    const userId = client.userId;
+    const lobby = lobbies.get(gameId);
+    if (!lobby?.game || !lobby.game.players.has(userId)) {
+      socket.close(1008, "Game is not running.");
+      return;
+    }
+
     const sockets = gameSockets.get(gameId) ?? new Set<GameWebSocket>();
     sockets.add(client);
     gameSockets.set(gameId, sockets);
 
-    const lobby = lobbies.get(gameId);
-    const game = lobby?.game && client.userId ? serializeGame(lobby.game, client.userId, lobby.props.clues) : null;
-    if (game) socket.send(JSON.stringify({ type: "game:update", game }));
-
+    socket.on("message", (raw) => {
+      const game = lobbies.get(gameId)?.game;
+      if (!game || !game.players.has(userId)) {
+        socket.close(1008, "You are no longer in this game."); return;
+      }
+      try {
+        const message = JSON.parse(raw.toString());
+        if (message.type !== "player:location" || !isLocation(message.location)) return;
+        updateLocation(game, userId, message.location);
+      } catch { /* Ignore malformed messages without interrupting other players. */ }
+    });
     socket.on("close", () => {
       sockets.delete(client);
       if (sockets.size === 0) gameSockets.delete(gameId);
     });
+
+    const game = serializeGame(lobby.game, userId);
+    if (game) socket.send(JSON.stringify({ type: "game:update", game }));
+    socket.send(JSON.stringify({ type: "location:start" }));
     return;
   }
 
@@ -226,6 +258,7 @@ wss.on("connection", (socket) => {
   const lobby = lobbies.get(client.lobbyId);
   if (lobby) {
     socket.send(JSON.stringify({ type: "lobby:update", lobby: serializeLobby(client.lobbyId, lobby) }));
+    if (lobby.status === "playing") socket.send(JSON.stringify({ type: "game:started", gameId: client.lobbyId }));
   }
 
   socket.on("close", () => {
@@ -298,12 +331,13 @@ app.post("/lobby/:lobbyId/join", (req: Request, res: Response) => {
     res.status(401).json({ error: "A valid userId is required" });
     return;
   }
-  if (!lobby.members.has(userId) && lobby.phase !== "lobby") {
-    res.status(409).json({ error: "This game has already started." });
-    return;
-  }
   if (!lobby.members.has(userId) && lobby.members.size >= lobby.props.players) {
     res.status(409).json({ error: "This lobby is full." });
+    return;
+  }
+
+  if (lobby.status !== "waiting" && !lobby.members.has(userId)) {
+    res.status(409).json({ error: "This game has already started." });
     return;
   }
 
@@ -335,7 +369,10 @@ app.delete("/lobby/:lobbyId/leave", (req: Request, res: Response) => {
   lobby.members.delete(userId);
   if (lobby.game) {
     removePlayer(lobby.game, userId);
-    if (lobby.game.result) lobby.phase = "ended";
+    if (lobby.game.result) lobby.status = "finished";
+    for (const socket of gameSockets.get(lobbyId) ?? []) {
+      if (socket.userId === userId) socket.close(1000, "Left game.");
+    }
   }
   if (lobby.members.size === 0) lobbies.delete(lobbyId);
   broadcastLobbyUpdate(lobbyId);
@@ -346,7 +383,7 @@ app.delete("/lobby/:lobbyId/leave", (req: Request, res: Response) => {
 // ---------- game ----------
 // The lobby ID is also the game ID: /game/:gameId and the WebSocket at /game/:gameId?userId=...
 
-// Admin starts the round: picks hunters, gives every player a sonar slot,
+// Admin starts the round: picks killers, gives every player a sonar slot,
 // and tells the lobby page to move to /game/:gameId.
 app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
   const lobbyId = req.params.lobbyId as string;
@@ -362,8 +399,8 @@ app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
     res.status(403).json({ error: "Only the lobby admin can start the game." });
     return;
   }
-  if (lobby.phase === "playing") {
-    res.status(409).json({ error: "The game has already started." });
+  if (lobby.status !== "waiting") {
+    res.status(409).json({ error: "This game is not waiting to start." });
     return;
   }
 
@@ -373,16 +410,16 @@ app.post("/lobby/:lobbyId/start", (req: Request, res: Response) => {
     sendError(res, error);
     return;
   }
-  lobby.phase = "playing";
+  lobby.status = "playing";
   console.log(`Game started: ${lobbyId}`);
 
-  const message = JSON.stringify({ type: "game:start", gameId: lobbyId });
+  const message = JSON.stringify({ type: "game:started", gameId: lobbyId });
   for (const socket of lobbySockets.get(lobbyId) ?? []) {
     if (socket.readyState === WebSocket.OPEN) socket.send(message);
   }
   broadcastLobbyUpdate(lobbyId);
   broadcastGameUpdate(lobbyId);
-  res.json({ gameId: lobbyId });
+  res.json({ success: true, gameId: lobbyId });
 });
 
 // After a round ends the admin reopens the lobby for the next one.
@@ -400,12 +437,12 @@ app.post("/lobby/:lobbyId/reset", (req: Request, res: Response) => {
     res.status(403).json({ error: "Only the lobby admin can reset the game." });
     return;
   }
-  if (lobby.phase !== "ended") {
+  if (lobby.status !== "finished") {
     res.status(409).json({ error: "The game is still running." });
     return;
   }
 
-  lobby.phase = "lobby";
+  lobby.status = "waiting";
   lobby.game = null;
   broadcastLobbyUpdate(lobbyId);
   broadcastGameUpdate(lobbyId);
@@ -422,7 +459,7 @@ app.get("/game/:gameId", (req: Request, res: Response) => {
     res.status(404).json({ error: "Game not found" });
     return;
   }
-  const game = userId ? serializeGame(lobby.game, userId, lobby.props.clues) : null;
+  const game = userId ? serializeGame(lobby.game, userId) : null;
   if (!game) {
     res.status(403).json({ error: "You are not in this game." });
     return;
@@ -430,26 +467,7 @@ app.get("/game/:gameId", (req: Request, res: Response) => {
   res.json(game);
 });
 
-// Body: { lat, lng, accuracy } from navigator.geolocation (accuracy in metres).
-app.post("/game/:gameId/location", (req: Request, res: Response) => {
-  const gameId = req.params.gameId as string;
-  const lobby = lobbies.get(gameId);
-  const userId = authenticateUser(req);
-
-  if (!lobby?.game) {
-    res.status(404).json({ error: "Game not found" });
-    return;
-  }
-  try {
-    updateLocation(lobby.game, userId ?? "", req.body);
-  } catch (error) {
-    sendError(res, error);
-    return;
-  }
-  res.status(204).end();
-});
-
-// Body: { targetId }. Same button for everyone: a hunter catches a runner, two runners exchange data.
+// Body: { targetId }. Same button for everyone: a killer catches a seeker, two seekers exchange data.
 // The phone only allows this once the sonar says the target is within ~2 m.
 app.post("/game/:gameId/scan", (req: Request, res: Response) => {
   const gameId = req.params.gameId as string;
@@ -467,19 +485,19 @@ app.post("/game/:gameId/scan", (req: Request, res: Response) => {
     sendError(res, error);
     return;
   }
-  if (lobby.game.result) lobby.phase = "ended";
+  if (lobby.game.result) lobby.status = "finished";
   broadcastLobbyUpdate(gameId);
   broadcastGameUpdate(gameId);
   res.json(outcome);
 });
 
 // Once a second: end rounds whose timer ran out and push fresh views
-// (sonar on/off follows GPS, clues refresh, countdown stays in sync).
+// (sonar on/off follows GPS, map pings refresh, countdown stays in sync).
 setInterval(() => {
   for (const [lobbyId, lobby] of lobbies) {
-    if (lobby.phase !== "playing" || !lobby.game) continue;
+    if (lobby.status !== "playing" || !lobby.game) continue;
     if (checkEnd(lobby.game)) {
-      lobby.phase = "ended";
+      lobby.status = "finished";
       broadcastLobbyUpdate(lobbyId);
     }
     broadcastGameUpdate(lobbyId);
@@ -489,3 +507,4 @@ setInterval(() => {
 server.listen(env.PORT, () => {
   console.log(`Backend API listening on port ${env.PORT}`);
 });
+

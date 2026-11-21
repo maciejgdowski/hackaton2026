@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 
 import MapBackground from "./MapBackground";
+import { getPlaceName } from "./Location";
 
 interface LobbySummary {
   id: string;
@@ -53,7 +54,7 @@ function App() {
   return (
     <>
       <div className="card" style={{ cursor: "pointer" }} onClick={() => navigate("/")}><p>Hello, {userName}!</p></div>
-      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>United States - New York</p>
+      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
 
       <div className="main">
         <div className="card" style={{ width: "70vw" }}>

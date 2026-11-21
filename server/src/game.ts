@@ -1,8 +1,8 @@
-// Game rules: roles, sonar slots, GPS, kills and win conditions.
+// Game rules: roles, sonar slots, GPS, map pings, kills and win conditions.
 // The lobby routes in app.ts call these; nothing in here knows about HTTP or sockets.
 
-export type Role = "hunter" | "runner";
-export type Phase = "lobby" | "playing" | "ended";
+export type Role = "killer" | "seeker";
+export type Status = "waiting" | "playing" | "finished";
 
 export interface Coordinates {
   lat: number;
@@ -24,7 +24,6 @@ export interface GamePlayer {
   killedBy: string | null;
   gateUntil: number; // sonar stays on until this time after the last "close on GPS"
   lastScanAt: number | null;
-  contacts: string[]; // runners this runner exchanged data with (they see each other on the map)
 }
 
 export interface GameResult {
@@ -38,7 +37,8 @@ export interface GameState {
   endsAt: number;
   zone: { center: Coordinates; radius: number }; // radius in metres
   players: Map<string, GamePlayer>; // UUID -> player
-  clue: { at: number; positions: { id: string; lat: number; lng: number }[] } | null; // last snapshot hunters got
+  pingInterval: number; // seekers see everyone this often (ms), set by the map size
+  ping: { at: number; positions: Map<string, Coordinates> } | null; // last snapshot the seekers got (UUID -> where)
   result: GameResult | null;
 }
 
@@ -51,15 +51,16 @@ export const LOCATION_MAX_AGE_MS = 30_000; // older fixes count as "no GPS"
 
 export const ZONE_RADIUS_M = { small: 150, medium: 300, large: 600 } as const;
 
-// How often hunters get a fresh "clue": the runners' positions.
-export const CLUE_INTERVAL_MS = { easy: 15_000, medium: 30_000, hard: 60_000 } as const;
+// How often seekers see everyone on the map (killers see everyone all the time).
+export const PING_INTERVAL_MS = { small: 20_000, medium: 40_000, large: 60_000 } as const;
+export const FIRST_PING_MS = 5_000; // the first ping waits until the role card is gone and phones have GPS
 
 // Sonar: every player gets one slot = one tone (17.8–19.9 kHz for 8 slots).
 // Phones only play and listen while another living player is this close on GPS.
-// Phone-to-phone GPS is often 15–30 m off, so the gate is generous and fails open without GPS.
+// Phone GPS is often 5–15 m off, so the gate gets a little slack and fails open without GPS.
 export const SONAR = { base: 17_800, spacing: 300, slots: 8 };
-export const SONAR_GATE_M = 30;
-export const SONAR_GATE_SLACK_M = 10; // + up to this much for reported GPS inaccuracy
+export const SONAR_GATE_M = 15;
+export const SONAR_GATE_SLACK_M = 5; // + up to this much for reported GPS inaccuracy
 export const SONAR_GATE_HOLD_MS = 10_000; // stay on this long after the last "close"
 
 // ---------- helpers ----------
@@ -89,7 +90,7 @@ export class GameError extends Error {
 
 // ---------- round ----------
 
-// members: lobby members in join order (UUID -> username). Picks `hunters` random hunters.
+// members: lobby members in join order (UUID -> username). Picks `hunters` random killers.
 export function createGame(
   members: Map<string, string>,
   props: { radius: keyof typeof ZONE_RADIUS_M; center: Coordinates; hunters: number },
@@ -98,20 +99,20 @@ export function createGame(
   const ids = Array.from(members.keys());
   if (ids.length < 2) throw new GameError("At least two players are required.", 409);
   if (ids.length > SONAR.slots) throw new GameError(`At most ${SONAR.slots} players can play.`, 409);
-  if (props.hunters >= ids.length) throw new GameError("There must be at least one runner.", 409);
+  if (props.hunters >= ids.length) throw new GameError("There must be at least one seeker.", 409);
 
   const shuffled = [...ids];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  const hunterIds = new Set(shuffled.slice(0, props.hunters));
+  const killerIds = new Set(shuffled.slice(0, props.hunters));
 
   const players = new Map<string, GamePlayer>();
   ids.forEach((id, slot) => {
     players.set(id, {
       name: members.get(id) ?? "Player",
-      role: hunterIds.has(id) ? "hunter" : "runner",
+      role: killerIds.has(id) ? "killer" : "seeker",
       slot,
       alive: true,
       location: null,
@@ -119,7 +120,6 @@ export function createGame(
       killedBy: null,
       gateUntil: 0,
       lastScanAt: null,
-      contacts: [],
     });
   });
 
@@ -128,30 +128,25 @@ export function createGame(
     endsAt: now + ROUND_DURATION_MS,
     zone: { center: props.center, radius: ZONE_RADIUS_M[props.radius] },
     players,
-    clue: null,
+    pingInterval: PING_INTERVAL_MS[props.radius],
+    ping: null,
     result: null,
   };
 }
 
-export function updateLocation(game: GameState, userId: string, body: unknown, now = Date.now()) {
+// location is already checked by isLocation() in app.ts
+export function updateLocation(game: GameState, userId: string, location: { lat: number; lng: number; accuracy: number }, now = Date.now()) {
   const player = game.players.get(userId);
-  if (!player) throw new GameError("You are not in this game.", 403);
-
-  const { lat, lng, accuracy } = (body ?? {}) as Record<string, unknown>;
-  const isNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-  if (!isNumber(lat) || !isNumber(lng) || !isNumber(accuracy)
-    || Math.abs(lat) > 90 || Math.abs(lng) > 180 || accuracy < 0 || accuracy > 100_000) {
-    throw new GameError("Invalid coordinates or accuracy.");
-  }
-  player.location = { lat, lng, accuracy, recordedAt: now };
+  if (!player) return;
+  player.location = { lat: location.lat, lng: location.lng, accuracy: location.accuracy, recordedAt: now };
 }
 
 // Everyone has the same "Scan" button, so nobody can tell roles apart by looking at a screen.
 // The phone only allows a scan once the sonar says the target is within ~2 m; the server checks the rest.
-//   hunter -> runner: caught (out of the game)
-//   runner -> runner: exchange data (from now on they see each other on the map)
+//   killer -> seeker: caught (out of the game)
+//   seeker -> seeker: data transfer (see transferData, empty for now)
 //   anything else:    nothing happens (still costs the cooldown)
-export type ScanResult = "caught" | "linked" | "already linked" | "nothing";
+export type ScanResult = "caught" | "transfer" | "nothing";
 
 export function scan(game: GameState, scannerId: string, targetId: unknown, now = Date.now()): { result: ScanResult; name: string } {
   checkEnd(game, now);
@@ -173,16 +168,12 @@ export function scan(game: GameState, scannerId: string, targetId: unknown, now 
     throw new GameError("Target is too far away.", 409);
   }
 
-  if (scanner.role === "runner" && target.role === "runner") {
-    if (scanner.contacts.includes(targetId as string)) return { result: "already linked", name: target.name };
-    scanner.contacts.push(targetId as string);
-    target.contacts.push(scannerId);
-    scanner.lastScanAt = now;
-    return { result: "linked", name: target.name };
-  }
-
   scanner.lastScanAt = now;
-  if (scanner.role === "hunter" && target.role === "runner") {
+  if (scanner.role === "seeker" && target.role === "seeker") {
+    transferData(game, scannerId, targetId as string);
+    return { result: "transfer", name: target.name };
+  }
+  if (scanner.role === "killer" && target.role === "seeker") {
     target.alive = false;
     target.diedAt = now;
     target.killedBy = scannerId;
@@ -190,6 +181,11 @@ export function scan(game: GameState, scannerId: string, targetId: unknown, now 
     return { result: "caught", name: target.name };
   }
   return { result: "nothing", name: target.name };
+}
+
+// Two seekers met and scanned: exchange data. Coming later – nothing happens yet.
+export function transferData(_game: GameState, _fromId: string, _toId: string) {
+  // TODO: what seekers exchange (and what it unlocks) is not decided yet
 }
 
 // Leaving mid-round counts as being out.
@@ -201,18 +197,18 @@ export function removePlayer(game: GameState, userId: string, now = Date.now()) 
   checkEnd(game, now);
 }
 
-// Hunters win when every runner is out; runners win if they last until the timer runs out
-// (or every hunter has left).
+// Killers win when every seeker is out; seekers win if they last until the timer runs out
+// (or every killer has left).
 export function checkEnd(game: GameState, now = Date.now()): boolean {
   if (game.result) return false;
   const players = Array.from(game.players.values());
-  const runnersAlive = players.some((p) => p.role === "runner" && p.alive);
-  const huntersAlive = players.some((p) => p.role === "hunter" && p.alive);
+  const seekersAlive = players.some((p) => p.role === "seeker" && p.alive);
+  const killersAlive = players.some((p) => p.role === "killer" && p.alive);
 
   let result: Omit<GameResult, "endedAt"> | null = null;
-  if (!runnersAlive) result = { winner: "hunter", reason: "The hunters caught every runner." };
-  else if (!huntersAlive) result = { winner: "runner", reason: "Every hunter left the game." };
-  else if (now >= game.endsAt) result = { winner: "runner", reason: "Time ran out – the runners survived." };
+  if (!seekersAlive) result = { winner: "killer", reason: "The killers caught every seeker." };
+  else if (!killersAlive) result = { winner: "seeker", reason: "Every killer left the game." };
+  else if (now >= game.endsAt) result = { winner: "seeker", reason: "Time ran out – the seekers survived." };
 
   if (!result) return false;
   game.result = { ...result, endedAt: now };
@@ -241,34 +237,68 @@ export function sonarGate(game: GameState, userId: string, now = Date.now()): bo
   return close || now < player.gateUntil;
 }
 
+// ---------- map ----------
+
+// Where the other living players are right now (GPS fixes older than 30 s are left out).
+// No ids, names or roles: just dots.
+function livePositions(game: GameState, userId: string, now: number): Coordinates[] {
+  const positions: Coordinates[] = [];
+  for (const [id, p] of game.players) {
+    if (id === userId || !p.alive || !hasFreshLocation(p, now)) continue;
+    positions.push({ lat: p.location!.lat, lng: p.location!.lng });
+  }
+  return positions;
+}
+
+// Killers (and players who are out) see everyone live.
+// Seekers see one shared snapshot of everyone, refreshed every pingInterval.
+// Both get the same at / nextAt, so both screens fade and count down the same way.
+function mapFor(game: GameState, userId: string, self: GamePlayer, now: number) {
+  if (game.result) return null;
+
+  const pingDue = game.ping
+    ? now - game.ping.at >= game.pingInterval
+    : now - game.startedAt >= FIRST_PING_MS;
+  if (pingDue) {
+    game.ping = { at: now, positions: new Map() };
+    for (const [id, p] of game.players) {
+      if (p.alive && hasFreshLocation(p, now)) {
+        game.ping.positions.set(id, { lat: p.location!.lat, lng: p.location!.lng });
+      }
+    }
+  }
+
+  const at = game.ping ? game.ping.at : game.startedAt;
+  const nextAt = game.ping ? game.ping.at + game.pingInterval : game.startedAt + FIRST_PING_MS;
+
+  let positions: Coordinates[];
+  if (self.role === "killer" || !self.alive) {
+    positions = livePositions(game, userId, now);
+  } else if (!game.ping) {
+    positions = [];
+  } else {
+    positions = [];
+    for (const [id, position] of game.ping.positions) {
+      if (id !== userId) positions.push(position); // my own dot comes from my phone
+    }
+  }
+
+  return { at, nextAt, positions };
+}
+
 // ---------- what one player may see ----------
 
-// Never includes other players' roles (until the game is over) or live positions.
-// Hunters get the runners' positions as a "clue" every CLUE_INTERVAL_MS (set by the lobby's clues).
-export function serializeGame(
-  game: GameState,
-  userId: string,
-  clues: keyof typeof CLUE_INTERVAL_MS,
-  now = Date.now(),
-) {
+// Never includes other players' roles (until the game is over).
+export function serializeGame(game: GameState, userId: string, now = Date.now()) {
   const self = game.players.get(userId);
   if (!self) return null;
-
-  const interval = CLUE_INTERVAL_MS[clues];
-  if (!game.result && (!game.clue || now - game.clue.at >= interval)) {
-    game.clue = {
-      at: now,
-      positions: Array.from(game.players, ([id, p]) => ({ id, p }))
-        .filter(({ p }) => p.role === "runner" && p.alive && p.location && now - p.location.recordedAt <= LOCATION_MAX_AGE_MS)
-        .map(({ id, p }) => ({ id, lat: p.location!.lat, lng: p.location!.lng })),
-    };
-  }
 
   const killer = self.killedBy ? game.players.get(self.killedBy) : undefined;
 
   return {
-    phase: (game.result ? "ended" : "playing") as Phase,
+    status: (game.result ? "finished" : "playing") as Status,
     serverTime: now,
+    startedAt: game.startedAt,
     endsAt: game.endsAt,
     zone: game.zone,
     self: {
@@ -287,17 +317,11 @@ export function serializeGame(
       alive: p.alive,
       role: game.result || id === userId ? p.role : null,
     })),
+    seekersLeft: Array.from(game.players.values()).filter((p) => p.role === "seeker" && p.alive).length,
     sonar: SONAR,
     sonarOn: sonarGate(game, userId, now),
     scanCooldownUntil: self.lastScanAt !== null ? self.lastScanAt + SCAN_COOLDOWN_MS : null,
-    // runners you exchanged data with: their live position
-    contacts: self.contacts
-      .map((id) => ({ id, p: game.players.get(id) }))
-      .filter(({ p }) => p && p.alive && p.location && now - p.location.recordedAt <= LOCATION_MAX_AGE_MS)
-      .map(({ id, p }) => ({ id, name: p!.name, lat: p!.location!.lat, lng: p!.location!.lng })),
-    clue: self.role === "hunter" && game.clue && !game.result
-      ? { ...game.clue, nextAt: game.clue.at + interval }
-      : null,
+    map: mapFor(game, userId, self, now),
     result: game.result,
   };
 }

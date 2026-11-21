@@ -1,5 +1,6 @@
 import L from "leaflet";
-import { MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { useEffect } from "react";
 import "leaflet/dist/leaflet.css";
 
 export type Coordinates = {
@@ -41,6 +42,15 @@ function ClickHandler({ onSelect }: { onSelect: (coords: Coordinates) => void })
   return null;
 }
 
+// MapContainer's initial center does not follow later GPS results.
+function CenterOnSelection({ value }: { value: Coordinates | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (value) map.panTo([value.lat, value.lng]);
+  }, [map, value]);
+  return null;
+}
+
 export default function LocationPickerMap({value, onChange, defaultCenter = { lat: 40.7831, lng: -73.9712 }, zoom = 12}: LocationPickerMapProps) {
   const center = value ?? defaultCenter;
 
@@ -69,6 +79,7 @@ export default function LocationPickerMap({value, onChange, defaultCenter = { la
             attribution='&copy; <a href="https://www.mapbox.com/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           />
           <ClickHandler onSelect={onChange} />
+          <CenterOnSelection value={value} />
           {value && (
             <Marker position={[value.lat, value.lng]} icon={pinIcon} />
           )}

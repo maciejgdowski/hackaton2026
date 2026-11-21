@@ -13,7 +13,6 @@ type GameBackgroundMapProps = {
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 const STYLE = "mapbox/dark-v11";
 
-// Without a Mapbox token fall back to free dark tiles (same as LocationPickerMap)
 const TILE_URL = TOKEN
   ? `https://api.mapbox.com/styles/v1/${STYLE}/tiles/512/{z}/{x}/{y}@2x.png?access_token=${TOKEN}`
   : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -23,10 +22,7 @@ export default function GameBackgroundMap({
   zoom = 13,
   minZoom = 11,
   maxZoom = 17,
-  maxBounds = [
-    [40.68, -74.06],
-    [40.89, -73.88],
-  ],
+  maxBounds,
   children,
 }: GameBackgroundMapProps) {
   return (

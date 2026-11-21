@@ -1,6 +1,7 @@
 import "./Style.css";
 import { useNavigate, useParams } from "react-router-dom";
 import MapBackground from "./MapBackground";
+import { getPlaceName } from "./Location";
 import { useEffect, useRef, useState } from "react";
 
 interface LobbyState {
@@ -14,7 +15,7 @@ interface LobbyState {
     clues: "easy" | "medium" | "hard";
   };
   members: Record<string, string>;
-  phase: "lobby" | "playing" | "ended";
+  status: "waiting" | "playing" | "finished";
 }
 
 interface LobbyTileProps {
@@ -31,6 +32,8 @@ export default function Lobby() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
+  const [startError, setStartError] = useState("");
+  const [isStarting, setIsStarting] = useState(false);
   const requestRef = useRef<{ lobbyId: string; promise: Promise<LobbyState> } | null>(null);
   const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
@@ -117,12 +120,10 @@ export default function Lobby() {
         const message = JSON.parse(event.data) as { type?: string; lobby?: LobbyState; gameId?: string };
         if (message.type === "lobby:update" && message.lobby) {
           setLobbyData(message.lobby);
-          // came back to a lobby whose game is already running
-          if (message.lobby.phase === "playing") navigate(`/game/${lobbyId}`);
-        } else if (message.type === "game:start" && message.gameId) {
-          navigate(`/game/${message.gameId}`);
         } else if (message.type === "lobby:closed") {
           navigate("/lobbies");
+        } else if (message.type === "game:started") {
+          navigate(`/game/${lobbyId}`);
         }
       } catch (messageError) {
         console.error("Could not read lobby update:", messageError);
@@ -148,23 +149,6 @@ export default function Lobby() {
     }
   }
 
-  async function startGame() {
-    if (!lobbyId || !userId) return;
-    try {
-      const response = await fetch(
-        `${API_URL}/lobby/${encodeURIComponent(lobbyId)}/start?userId=${encodeURIComponent(userId)}`,
-        { method: "POST" }
-      );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(data.error ?? `Could not start the game (${response.status}).`);
-      }
-      // everyone (us too) moves to the game page when the "game:start" message arrives
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not start the game.");
-    }
-  }
-
   async function disbandLobby() {
     if (!lobbyId || !userId) return;
     try {
@@ -182,13 +166,36 @@ export default function Lobby() {
     }
   }
 
+  async function requestGameStart() {
+  if (!lobbyId || !userId || isStarting) return;
+  setIsStarting(true);
+  setStartError("");
+  try {
+    const response = await fetch(
+      `${API_URL}/lobby/${encodeURIComponent(lobbyId)}/start?userId=${encodeURIComponent(userId)}`,
+      { method: "POST" },
+    );
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error ?? "Could not start the game.");
+    }
+    navigate(`/game/${lobbyId}`);
+  } catch (error) {
+    setStartError(error instanceof Error ? error.message : "Could not start game.");
+  } finally {
+    setIsStarting(false);
+  }
+}
+
+
   const members = Object.entries(lobbyData?.members ?? {});
   const isAdmin = members.length > 0 && members[0][0] === userId;
 
   return (
     <>
       <div className="card"><p>{isAdmin ? "You are the lobby admin" : "Waiting for host..."}</p></div>
-      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>United States - New York</p>
+      <p style={{ marginLeft: "1vw", marginTop: "0.1vh", fontSize: "0.75rem", fontFamily: "var(--tm-font-mono)" }}>{getPlaceName()}</p>
 
       <div className="main">
         <div className="card" style={{ width: "70vw" }}>
@@ -210,7 +217,8 @@ export default function Lobby() {
           </div>
           {!isLoading && !error && (isAdmin ? (
             <div style={{ display: "flex", justifyContent: "center", gap: "1rem", flexWrap: "wrap" }}>
-              <button onClick={startGame}>Start game</button>
+              <button onClick={requestGameStart} disabled={isStarting}>{isStarting ? "Starting..." : "Start game"}</button>
+              {startError && <p role="alert">{startError}</p>}
               <button onClick={disbandLobby}>Disband / Abandon lobby</button>
             </div>
           ) : (
